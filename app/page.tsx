@@ -19,6 +19,7 @@ import {
   Activity,
   ArrowRight,
   Wallet,
+  Download,
 } from "lucide-react";
 
 const formatFCFA = (amount: number) =>
@@ -34,6 +35,11 @@ const formatDate = (date: string) =>
 const dateKey = (date: Date) =>
   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+};
+
 export default function Home() {
   const products = useLiveQuery(() => db.products.toArray(), [], []);
   const movements = useLiveQuery(
@@ -47,6 +53,42 @@ export default function Home() {
   const [weeklyActivity, setWeeklyActivity] = useState<
     { key: string; label: string; entries: number; exits: number }[]
   >([]);
+  const [installPrompt, setInstallPrompt] =
+    useState<BeforeInstallPromptEvent | null>(null);
+  const [isIOS, setIsIOS] = useState(false);
+  const [isInstalled, setIsInstalled] = useState(false);
+
+  useEffect(() => {
+    const standalone =
+      window.matchMedia("(display-mode: standalone)").matches ||
+      (navigator as Navigator & { standalone?: boolean }).standalone === true;
+
+    setIsInstalled(standalone);
+    setIsIOS(/iphone|ipad|ipod/.test(navigator.userAgent.toLowerCase()));
+
+    const handleBeforeInstallPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event as BeforeInstallPromptEvent);
+    };
+
+    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+    return () => window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+  }, []);
+
+  async function handleInstallApp() {
+    if (installPrompt) {
+      await installPrompt.prompt();
+      const choice = await installPrompt.userChoice;
+      if (choice.outcome === "accepted") setInstallPrompt(null);
+      return;
+    }
+
+    if (isIOS) {
+      window.alert(
+        "Pour installer Nexora sur iPhone : ouvrez cette page dans Safari, appuyez sur le bouton Partager, choisissez « Sur l’écran d’accueil », puis appuyez sur « Ajouter »."
+      );
+    }
+  }
 
   useEffect(() => {
     const now = new Date();
@@ -135,13 +177,25 @@ export default function Home() {
               </p>
             </div>
 
-            <Link
-              href="/produits"
-              className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-white px-5 py-3 text-sm font-bold text-blue-800 shadow-lg transition hover:-translate-y-0.5 hover:bg-blue-50"
-            >
-              <Plus size={18} />
-              Ajouter un produit
-            </Link>
+            <div className="flex shrink-0 flex-col gap-3 sm:items-end">
+              <Link
+                href="/produits"
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-white px-5 py-3 text-sm font-bold text-blue-800 shadow-lg transition hover:-translate-y-0.5 hover:bg-blue-50"
+              >
+                <Plus size={18} />
+                Ajouter un produit
+              </Link>
+              {!isInstalled && (installPrompt || isIOS) && (
+                <button
+                  type="button"
+                  onClick={handleInstallApp}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/25 bg-white/10 px-5 py-3 text-sm font-semibold text-white backdrop-blur transition hover:bg-white/20"
+                >
+                  <Download size={17} />
+                  Installer Nexora
+                </button>
+              )}
+            </div>
           </div>
         </section>
 
@@ -199,8 +253,22 @@ export default function Home() {
           </div>
         </section>
 
-        {/* ACTIVITÉ ET RACCOURCIS */}
-        <section className="grid grid-cols-1 gap-5 xl:grid-cols-[1.5fr_1fr]">
+        {/* ACTIONS RAPIDES — au-dessus des indicateurs de stock */}
+        <section className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200/80 sm:p-6">
+          <h2 className="font-bold text-slate-900">Actions rapides</h2>
+          <p className="mt-1 text-xs text-slate-500">
+            Accédez directement aux opérations courantes
+          </p>
+          <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <QuickAction href="/mouvements" label="Entrée de stock" icon={<ArrowDownToLine size={19} />} tone="emerald" />
+            <QuickAction href="/mouvements" label="Sortie de stock" icon={<ArrowUpFromLine size={19} />} tone="rose" />
+            <QuickAction href="/produits" label="Nouveau produit" icon={<Plus size={19} />} tone="blue" />
+            <QuickAction href="/rapports" label="Voir les rapports" icon={<BarChart3 size={19} />} tone="violet" />
+          </div>
+        </section>
+
+        {/* ACTIVITÉ DE LA SEMAINE */}
+        <section>
           <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200/80 sm:p-6">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
@@ -243,17 +311,6 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200/80 sm:p-6">
-            <h2 className="font-bold text-slate-900">Actions rapides</h2>
-            <p className="mt-1 text-xs text-slate-500">Accédez directement aux opérations courantes</p>
-
-            <div className="mt-5 grid grid-cols-2 gap-3">
-              <QuickAction href="/mouvements" label="Entrée de stock" icon={<ArrowDownToLine size={19} />} tone="emerald" />
-              <QuickAction href="/mouvements" label="Sortie de stock" icon={<ArrowUpFromLine size={19} />} tone="rose" />
-              <QuickAction href="/produits" label="Nouveau produit" icon={<Plus size={19} />} tone="blue" />
-              <QuickAction href="/rapports" label="Voir les rapports" icon={<BarChart3 size={19} />} tone="violet" />
-            </div>
-          </div>
         </section>
 
         {/* ALERTES ET HISTORIQUE */}
