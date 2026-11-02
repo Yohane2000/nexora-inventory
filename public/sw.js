@@ -1,123 +1,174 @@
-const CACHE_NAME = "nexora-inventory-v2";
+const CACHE_NAME = "nexora-inventory-v3";
 
-const APP_ASSETS = [
-"/",
-"/produits",
-"/mouvements",
-"/rapports",
-"/parametres",
-"/icons/icon-192.png",
-"/icons/icon-512.png",
+const APP_ROUTES = [
+  "/",
+  "/produits",
+  "/mouvements",
+  "/rapports",
+  "/parametres",
+];
+
+const APP_ICONS = [
+  "/icons/icon-192.png",
+  "/icons/icon-512.png",
 ];
 
 // INSTALLATION
 self.addEventListener("install", (event) => {
-event.waitUntil(
-caches.open(CACHE_NAME).then(async (cache) => {
-await cache.addAll([
-"/icons/icon-192.png",
-"/icons/icon-512.png",
-]);
-})
-);
+  event.waitUntil(
+    (async () => {
+      const cache = await caches.open(CACHE_NAME);
 
-self.skipWaiting();
+      await cache.addAll(APP_ICONS);
+
+      // Préchargement des pages principales
+      await Promise.allSettled(
+        APP_ROUTES.map(async (route) => {
+          const response = await fetch(route, {
+            cache: "reload",
+          });
+
+          if (response.ok) {
+            await cache.put(route, response);
+          }
+        })
+      );
+
+      await self.skipWaiting();
+    })()
+  );
 });
 
 // ACTIVATION
 self.addEventListener("activate", (event) => {
-event.waitUntil(
-caches.keys().then(async (keys) => {
-await Promise.all(
-keys
-.filter((key) => key !== CACHE_NAME)
-.map((key) => caches.delete(key))
-);
+  event.waitUntil(
+    (async () => {
+      const keys = await caches.keys();
 
+      await Promise.all(
+        keys
+          .filter(
+            (key) =>
+              key.startsWith("nexora-inventory-") &&
+              key !== CACHE_NAME
+          )
+          .map((key) => caches.delete(key))
+      );
 
-  await self.clients.claim();
-})
-
-
-);
+      await self.clients.claim();
+    })()
+  );
 });
 
 // GESTION DES REQUÊTES
 self.addEventListener("fetch", (event) => {
-const request = event.request;
+  const request = event.request;
 
-if (request.method !== "GET") return;
+  if (request.method !== "GET") return;
 
-const url = new URL(request.url);
+  const url = new URL(request.url);
 
-if (url.origin !== self.location.origin) return;
+  if (url.origin !== self.location.origin) return;
 
-// Pages HTML
-if (request.mode === "navigate") {
-event.respondWith(
-fetch(request)
-.then(async (response) => {
-if (response.ok) {
-const cache = await caches.open(CACHE_NAME);
-await cache.put(request, response.clone());
-}
+  // NAVIGATION
+  if (request.mode === "navigate") {
+    event.respondWith(
+      (async () => {
+        const cache = await caches.open(CACHE_NAME);
 
+        try {
+          const response = await fetch(request);
 
-      return response;
-    })
-    .catch(async () => {
+          if (response.ok) {
+            await cache.put(url.pathname, response.clone());
+          }
+
+          return response;
+        } catch {
+          const cachedPage = await cache.match(url.pathname);
+
+          if (cachedPage) return cachedPage;
+
+          const cachedHome = await cache.match("/");
+
+          if (cachedHome) return cachedHome;
+
+          return new Response(
+            `<!doctype html>
+            <html lang="fr">
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width,initial-scale=1">
+              <title>Nexora Inventory</title>
+              <body style="font-family:system-ui;padding:2rem">
+                <h1>Nexora Inventory</h1>
+                <p>
+                  Cette page n'a pas encore été mise en cache.
+                  Reconnectez-vous et ouvrez-la une fois.
+                </p>
+              </body>
+            </html>`,
+            {
+              status: 503,
+              headers: {
+                "Content-Type": "text/html; charset=utf-8",
+              },
+            }
+          );
+        }
+      })()
+    );
+
+    return;
+  }
+
+  // RESSOURCES NEXT.JS ET ICÔNES
+  if (
+    url.pathname.startsWith("/_next/static/") ||
+    url.pathname.startsWith("/icons/")
+  ) {
+    event.respondWith(
+      (async () => {
+        const cache = await caches.open(CACHE_NAME);
+
+        const cached = await cache.match(request);
+
+        if (cached) return cached;
+
+        try {
+          const response = await fetch(request);
+
+          if (response.ok) {
+            await cache.put(request, response.clone());
+          }
+
+          return response;
+        } catch {
+          return Response.error();
+        }
+      })()
+    );
+
+    return;
+  }
+
+  // AUTRES RESSOURCES
+  event.respondWith(
+    (async () => {
       const cache = await caches.open(CACHE_NAME);
 
-      const cachedPage = await cache.match(request);
+      try {
+        const response = await fetch(request);
 
-      if (cachedPage) return cachedPage;
-
-      const cachedHome = await cache.match("/");
-
-      if (cachedHome) return cachedHome;
-
-      return new Response(
-        "Nexora Inventory : page indisponible hors connexion.",
-        {
-          status: 503,
-          headers: {
-            "Content-Type": "text/plain; charset=utf-8",
-          },
+        if (response.ok) {
+          await cache.put(request, response.clone());
         }
-      );
-    })
-);
 
-return;
+        return response;
+      } catch {
+        const cached = await cache.match(request);
 
-
-}
-
-// Ressources statiques
-if (
-url.pathname.startsWith("/_next/static/") ||
-url.pathname.startsWith("/icons/")
-) {
-event.respondWith(
-caches.match(request).then(async (cached) => {
-if (cached) return cached;
-
-
-    try {
-      const response = await fetch(request);
-
-      if (response.ok) {
-        const cache = await caches.open(CACHE_NAME);
-        await cache.put(request, response.clone());
+        return cached || Response.error();
       }
-
-      return response;
-    } catch {
-      return Response.error();
-    }
-  })
-);
-
-
-}
+    })()
+  );
 });
