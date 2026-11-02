@@ -199,6 +199,20 @@ export default function Home() {
           </div>
         </section>
 
+                {/* ACTIONS RAPIDES — au-dessus des indicateurs de stock */}
+        <section className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200/80 sm:p-6">
+          <h2 className="font-bold text-slate-900">Actions rapides</h2>
+          <p className="mt-1 text-xs text-slate-500">
+            Accédez directement aux opérations courantes
+          </p>
+          <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <QuickAction href="/mouvements" label="Entrée de stock" icon={<ArrowDownToLine size={19} />} tone="emerald" />
+            <QuickAction href="/mouvements" label="Sortie de stock" icon={<ArrowUpFromLine size={19} />} tone="rose" />
+            <QuickAction href="/produits" label="Nouveau produit" icon={<Plus size={19} />} tone="blue" />
+            <QuickAction href="/rapports" label="Voir les rapports" icon={<BarChart3 size={19} />} tone="violet" />
+          </div>
+        </section>
+
         {/* KPI PRINCIPAUX */}
         <section>
           <div className="mb-4 flex items-center justify-between">
@@ -253,19 +267,7 @@ export default function Home() {
           </div>
         </section>
 
-        {/* ACTIONS RAPIDES — au-dessus des indicateurs de stock */}
-        <section className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200/80 sm:p-6">
-          <h2 className="font-bold text-slate-900">Actions rapides</h2>
-          <p className="mt-1 text-xs text-slate-500">
-            Accédez directement aux opérations courantes
-          </p>
-          <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <QuickAction href="/mouvements" label="Entrée de stock" icon={<ArrowDownToLine size={19} />} tone="emerald" />
-            <QuickAction href="/mouvements" label="Sortie de stock" icon={<ArrowUpFromLine size={19} />} tone="rose" />
-            <QuickAction href="/produits" label="Nouveau produit" icon={<Plus size={19} />} tone="blue" />
-            <QuickAction href="/rapports" label="Voir les rapports" icon={<BarChart3 size={19} />} tone="violet" />
-          </div>
-        </section>
+
 
         {/* ACTIVITÉ DE LA SEMAINE */}
         <section>
