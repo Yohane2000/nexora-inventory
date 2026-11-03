@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useLiveQuery } from "dexie-react-hooks";
-import { db } from "@/lib/database/db";
+import { useDatabase } from "@/lib/database/DatabaseProvider";
 import {
   Package,
   Boxes,
@@ -45,6 +45,7 @@ const formatDate = (date: string) => {
 };
 
 export default function ReportsPage() {
+  const db = useDatabase();
   const [currentDate, setCurrentDate] = useState<Date | null>(null);
   const [isOnline, setIsOnline] = useState(true);
 
@@ -62,10 +63,10 @@ export default function ReportsPage() {
     };
   }, []);
 
-  const products = useLiveQuery(() => db.products.toArray(), [], []);
+  const products = useLiveQuery(() => db.products.toArray(), [db], []);
   const movements = useLiveQuery(
     () => db.movements.orderBy("createdAt").reverse().toArray(),
-    [],
+    [db],
     []
   );
 

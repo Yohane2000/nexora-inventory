@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import type { FormEvent, ReactNode } from "react";
-import { db, type Product } from "@/lib/database/db";
+import { useDatabase } from "@/lib/database/DatabaseProvider";
+import type { Product } from "@/lib/database/db";
 import {
   Plus,
   Search,
@@ -46,9 +47,11 @@ const formatFCFA = (amount: number) =>
   new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 0 }).format(amount) + " FCFA";
 
 export default function ProductsPage() {
+  const db = useDatabase();
+
   const products = useLiveQuery(
     () => db.products.orderBy("createdAt").reverse().toArray(),
-    [],
+    [db],
     []
   );
 

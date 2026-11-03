@@ -24,7 +24,10 @@ import {
   Info,
 } from "lucide-react";
 
-import { db } from "@/lib/database/db";
+import {
+  useDatabase,
+  useDatabaseUid,
+} from "@/lib/database/DatabaseProvider";
 
 type CompanySettings = {
   companyName: string;
@@ -33,7 +36,7 @@ type CompanySettings = {
   address: string;
 };
 
-const STORAGE_KEY = "nexora-inventory-settings";
+const LEGACY_STORAGE_KEY = "nexora-inventory-settings";
 
 const defaultSettings: CompanySettings = {
   companyName: "",
@@ -43,6 +46,10 @@ const defaultSettings: CompanySettings = {
 };
 
 export default function SettingsPage() {
+  const db = useDatabase();
+  const uid = useDatabaseUid();
+  const storageKey = `nexora-inventory-settings-${uid}`;
+
   const [settings, setSettings] = useState<CompanySettings>(defaultSettings);
   const [saved, setSaved] = useState(false);
   const [message, setMessage] = useState("");
@@ -52,7 +59,18 @@ export default function SettingsPage() {
 
   useEffect(() => {
     try {
-      const stored = localStorage.getItem(STORAGE_KEY);
+      let stored = localStorage.getItem(storageKey);
+
+      // Migration unique des anciens paramètres partagés vers le premier compte connecté.
+      if (!stored) {
+        const legacyStored = localStorage.getItem(LEGACY_STORAGE_KEY);
+
+        if (legacyStored) {
+          stored = legacyStored;
+          localStorage.setItem(storageKey, legacyStored);
+          localStorage.removeItem(LEGACY_STORAGE_KEY);
+        }
+      }
 
       if (stored) {
         setSettings({
@@ -64,7 +82,7 @@ export default function SettingsPage() {
       setMessageIsError(true);
       setMessage("Impossible de charger les paramètres.");
     }
-  }, []);
+  }, [storageKey]);
 
   function updateField(field: keyof CompanySettings, value: string) {
     setSettings((previous) => ({
@@ -77,7 +95,7 @@ export default function SettingsPage() {
 
   function saveSettings() {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+      localStorage.setItem(storageKey, JSON.stringify(settings));
       setSaved(true);
       setMessageIsError(false);
       setMessage("Les informations de votre entreprise ont été enregistrées.");
@@ -190,7 +208,7 @@ export default function SettingsPage() {
           ...backup.settings,
         };
 
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(restoredSettings));
+        localStorage.setItem(storageKey, JSON.stringify(restoredSettings));
         setSettings(restoredSettings);
       }
 

@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
-import { db, type MovementType } from "@/lib/database/db";
+import { useDatabase } from "@/lib/database/DatabaseProvider";
+import type { MovementType } from "@/lib/database/db";
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
@@ -39,10 +40,17 @@ const formatNumber = (value: number) =>
   new Intl.NumberFormat("fr-FR").format(value);
 
 export default function MovementsPage() {
-  const products = useLiveQuery(() => db.products.toArray(), [], []);
+  const db = useDatabase();
+
+  const products = useLiveQuery(
+    () => db.products.toArray(),
+    [db],
+    []
+  );
+
   const movements = useLiveQuery(
     () => db.movements.orderBy("createdAt").reverse().toArray(),
-    [],
+    [db],
     []
   );
 

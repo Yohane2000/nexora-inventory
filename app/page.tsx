@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useLiveQuery } from "dexie-react-hooks";
-import { db } from "@/lib/database/db";
+import { useDatabase } from "@/lib/database/DatabaseProvider";
 import {
   Plus,
   ArrowDownToLine,
@@ -41,23 +41,26 @@ type BeforeInstallPromptEvent = Event & {
 };
 
 export default function Home() {
-  const products = useLiveQuery(() => db.products.toArray(), [], []);
+  const db = useDatabase();
+
+  const products = useLiveQuery(() => db.products.toArray(), [db], []);
   const movements = useLiveQuery(
     () => db.movements.orderBy("createdAt").reverse().toArray(),
-    [],
+    [db],
     []
   );
 
   const [currentDate, setCurrentDate] = useState("");
   const [currentYear, setCurrentYear] = useState("");
-  const [weeklyActivity, setWeeklyActivity] = useState<
-    { key: string; label: string; entries: number; exits: number }[]
-  >([]);
-  const [installPrompt, setInstallPrompt] =
-    useState<BeforeInstallPromptEvent | null>(null);
-  const [isIOS, setIsIOS] = useState(false);
-  const [isInstalled, setIsInstalled] = useState(false);
+const [weeklyActivity, setWeeklyActivity] = useState<
+  { key: string; label: string; entries: number; exits: number }[]
+>([]);
 
+const [installPrompt, setInstallPrompt] =
+  useState<BeforeInstallPromptEvent | null>(null);
+
+const [isIOS, setIsIOS] = useState(false);
+const [isInstalled, setIsInstalled] = useState(false);
   useEffect(() => {
     const standalone =
       window.matchMedia("(display-mode: standalone)").matches ||

@@ -30,12 +30,12 @@ export interface Movement {
   createdAt: string;
 }
 
-class NexoraDatabase extends Dexie {
+export class NexoraDatabase extends Dexie {
   products!: EntityTable<Product, "id">;
   movements!: EntityTable<Movement, "id">;
 
-  constructor() {
-    super("NexoraInventoryDB");
+  constructor(uid: string) {
+    super(`NexoraInventory_${uid}`);
 
     this.version(1).stores({
       products: "++id, &sku, name, category, quantity, createdAt",
@@ -43,10 +43,27 @@ class NexoraDatabase extends Dexie {
 
     this.version(2).stores({
       products: "++id, &sku, name, category, quantity, createdAt",
-      movements:
-        "++id, productId, type, createdAt, productSku",
+      movements: "++id, productId, type, createdAt, productSku",
     });
   }
 }
 
-export const db = new NexoraDatabase();
+const databases = new Map<string, NexoraDatabase>();
+
+export function getUserDatabase(uid: string): NexoraDatabase {
+  if (!uid) {
+    throw new Error("Identifiant utilisateur Firebase manquant.");
+  }
+
+  const existingDatabase = databases.get(uid);
+
+  if (existingDatabase) {
+    return existingDatabase;
+  }
+
+  const database = new NexoraDatabase(uid);
+
+  databases.set(uid, database);
+
+  return database;
+}
