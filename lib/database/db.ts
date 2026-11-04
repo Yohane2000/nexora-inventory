@@ -221,17 +221,33 @@ export class NexoraDatabase extends Dexie {
 
     this.products.hook("updating", (modifications) => {
       const changes = modifications as Partial<Product>;
+      const keys = Object.keys(modifications);
 
+      // Une confirmation de synchronisation ne doit pas
+      // déclencher une nouvelle synchronisation.
       if (changes.syncStatus === "synced") {
         return modifications;
       }
 
-      const keys = Object.keys(modifications);
-
+      // Une modification du statut seul ne change pas
+      // les données métier.
       if (keys.every((key) => key === "syncStatus")) {
         return modifications;
       }
 
+      // Le recalcul du stock est une opération locale dérivée
+      // des mouvements. Il ne doit pas remettre le produit
+      // en attente de synchronisation.
+      const isStockRecalculation = keys.every(
+        (key) => key === "quantity" || key === "syncStatus"
+      );
+
+      if (isStockRecalculation) {
+        return modifications;
+      }
+
+      // Les véritables modifications du produit
+      // doivent être synchronisées.
       return {
         ...modifications,
         syncStatus: "pending",

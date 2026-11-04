@@ -12,6 +12,7 @@ import type {
   NexoraDatabase,
   Product,
   Movement,
+  SyncDeletion,
 } from "@/lib/database/db";
 
 type CloudProduct = Omit<
@@ -22,6 +23,11 @@ type CloudProduct = Omit<
 type CloudMovement = Omit<
   Movement,
   "id" | "productId" | "syncStatus"
+>;
+
+type CloudDeletion = Omit<
+  SyncDeletion,
+  "id" | "syncStatus"
 >;
 
 const activeSyncs = new Map<string, Promise<void>>();
@@ -43,7 +49,8 @@ export function syncUserData(
   const existing = activeSyncs.get(uid);
   if (existing) return existing;
 
-  const promise = syncProducts(uid, db)
+  const promise = syncDeletions(uid, db)
+    .then(() => syncProducts(uid, db))
     .then(() => syncMovements(uid, db))
     .then(() => recalculateAllProductStocks(db))
     .finally(() => {
@@ -51,7 +58,175 @@ export function syncUserData(
     });
 
   activeSyncs.set(uid, promise);
+
   return promise;
+}
+
+// ==========================================
+// OUTILS DE SUPPRESSION
+// ==========================================
+
+async function isDeleted(
+  db: NexoraDatabase,
+  syncId: string,
+  entityType: "product" | "movement"
+): Promise<boolean> {
+  const deletion = await db.syncDeletions
+    .where("syncId")
+    .equals(syncId)
+    .first();
+
+  return deletion?.entityType === entityType;
+}
+
+async function applyRemoteDeletion(
+  db: NexoraDatabase,
+  deletion: CloudDeletion
+): Promise<void> {
+  await db.transaction(
+    "rw",
+    db.products,
+    db.movements,
+    db.syncDeletions,
+    async () => {
+      const existingDeletion = await db.syncDeletions
+        .where("syncId")
+        .equals(deletion.syncId)
+        .first();
+
+      // Éviter un conflit d'index unique avec le hook Dexie.
+      if (existingDeletion?.id !== undefined) {
+        await db.syncDeletions.delete(existingDeletion.id);
+      }
+
+      if (deletion.entityType === "product") {
+        const product = await db.products
+          .where("syncId")
+          .equals(deletion.syncId)
+          .first();
+
+        if (product?.id !== undefined) {
+          // Les mouvements associés ne sont pas supprimés.
+          await db.products.delete(product.id);
+        }
+      }
+
+      if (deletion.entityType === "movement") {
+        const movement = await db.movements
+          .where("syncId")
+          .equals(deletion.syncId)
+          .first();
+
+        if (movement?.id !== undefined) {
+          await db.movements.delete(movement.id);
+        }
+      }
+
+      // Conserver le marqueur de suppression.
+      const generatedDeletion = await db.syncDeletions
+        .where("syncId")
+        .equals(deletion.syncId)
+        .first();
+
+      const record: SyncDeletion = {
+        ...deletion,
+        syncStatus: "synced",
+      };
+
+      if (generatedDeletion?.id !== undefined) {
+        await db.syncDeletions.put({
+          ...record,
+          id: generatedDeletion.id,
+        });
+      } else {
+        await db.syncDeletions.add(record);
+      }
+    }
+  );
+}
+
+// ==========================================
+// SYNCHRONISATION DES SUPPRESSIONS
+// ==========================================
+
+async function syncDeletions(
+  uid: string,
+  db: NexoraDatabase
+): Promise<void> {
+  const deletionsRef = collection(
+    firestore,
+    "users",
+    uid,
+    "syncDeletions"
+  );
+
+  // 1. Envoyer les suppressions locales.
+  const pending = await db.syncDeletions
+    .where("syncStatus")
+    .equals("pending")
+    .toArray();
+
+  for (const deletion of pending) {
+    if (!deletion.syncId || deletion.id === undefined) {
+      continue;
+    }
+
+    const {
+      id,
+      syncStatus,
+      ...cloudDeletion
+    } = deletion;
+
+    const deletionRef = doc(
+      deletionsRef,
+      deletion.syncId
+    );
+
+    await setDoc(deletionRef, cloudDeletion);
+
+    const current = await db.syncDeletions
+      .where("syncId")
+      .equals(deletion.syncId)
+      .first();
+
+    if (
+      current?.id !== undefined &&
+      current.deletedAt === deletion.deletedAt
+    ) {
+      await db.syncDeletions.update(current.id, {
+        syncStatus: "synced",
+      });
+    }
+  }
+
+  // 2. Récupérer les suppressions distantes.
+  const remoteDeletions = await getDocs(deletionsRef);
+
+  for (const remoteDoc of remoteDeletions.docs) {
+    const remote = remoteDoc.data();
+
+    if (
+      remote.entityType !== "product" &&
+      remote.entityType !== "movement"
+    ) {
+      console.warn(
+        "[Nexora Sync] Suppression distante invalide ignorée.",
+        remoteDoc.id
+      );
+      continue;
+    }
+
+    const deletion: CloudDeletion = {
+      syncId: remoteDoc.id,
+      entityType: remote.entityType,
+      deletedAt:
+        typeof remote.deletedAt === "string"
+          ? remote.deletedAt
+          : new Date().toISOString(),
+    };
+
+    await applyRemoteDeletion(db, deletion);
+  }
 }
 
 // ==========================================
@@ -77,6 +252,10 @@ async function syncProducts(
   // Envoyer les produits locaux.
   for (const product of pending) {
     if (!product.syncId || product.id === undefined) continue;
+
+    if (await isDeleted(db, product.syncId, "product")) {
+      continue;
+    }
 
     const productRef = doc(productsRef, product.syncId);
 
@@ -143,10 +322,14 @@ async function syncProducts(
     }
   }
 
-  // Récupérer les produits distants.
+  // Télécharger les produits distants.
   const remoteProducts = await getDocs(productsRef);
 
   for (const remoteDoc of remoteProducts.docs) {
+    if (await isDeleted(db, remoteDoc.id, "product")) {
+      continue;
+    }
+
     const remote = remoteDoc.data() as CloudProduct;
 
     const local = await db.products
@@ -189,7 +372,7 @@ async function syncMovements(
     "movements"
   );
 
-  // 1. Envoyer les mouvements locaux en attente.
+  // 1. Envoyer les mouvements locaux.
   const pending = await db.movements
     .where("syncStatus")
     .equals("pending")
@@ -197,6 +380,10 @@ async function syncMovements(
 
   for (const movement of pending) {
     if (!movement.syncId || movement.id === undefined) continue;
+
+    if (await isDeleted(db, movement.syncId, "movement")) {
+      continue;
+    }
 
     if (!movement.productSyncId) {
       console.warn(
@@ -218,7 +405,6 @@ async function syncMovements(
       movement.syncId
     );
 
-    // Le même syncId désigne toujours le même mouvement.
     await setDoc(
       movementRef,
       cloudMovement as CloudMovement
@@ -237,6 +423,10 @@ async function syncMovements(
   const remoteMovements = await getDocs(movementsRef);
 
   for (const remoteDoc of remoteMovements.docs) {
+    if (await isDeleted(db, remoteDoc.id, "movement")) {
+      continue;
+    }
+
     const remote = remoteDoc.data() as CloudMovement;
 
     if (
@@ -257,7 +447,9 @@ async function syncMovements(
       .equals(remote.productSyncId)
       .first();
 
-    if (!product || product.id === undefined) continue;
+    // Le mouvement reste récupérable même si le produit
+    // a été supprimé localement.
+    const localProductId = product?.id ?? 0;
 
     const existing = await db.movements
       .where("syncId")
@@ -265,7 +457,6 @@ async function syncMovements(
       .first();
 
     if (existing) {
-      // Ne jamais recréer un mouvement déjà présent.
       if (
         existing.syncStatus === "pending" &&
         existing.id !== undefined
@@ -278,12 +469,11 @@ async function syncMovements(
       continue;
     }
 
-    // Enregistrer le mouvement distant dans Dexie.
     await db.movements.add({
       ...remote,
       syncId: remoteDoc.id,
       syncStatus: "synced",
-      productId: product.id,
+      productId: localProductId,
     });
   }
 }
@@ -312,7 +502,6 @@ async function recalculateAllProductStocks(
     }
   }
 
-  // Calculer les variations nettes.
   for (const movement of movements) {
     const productSyncId =
       movement.productSyncId ||
@@ -331,7 +520,6 @@ async function recalculateAllProductStocks(
     );
   }
 
-  // Stock final = stock initial + entrées - sorties.
   for (const product of products) {
     if (product.id === undefined || !product.syncId) continue;
 
