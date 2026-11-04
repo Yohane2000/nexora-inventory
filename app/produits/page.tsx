@@ -145,19 +145,35 @@ export default function ProductsPage() {
         return;
       }
 
-      const now = new Date().toISOString();
+    const now = new Date().toISOString();
 
-      const productData = {
-        name: form.name.trim(),
-        sku,
-        category: form.category,
-        description: form.description.trim(),
-        purchasePrice,
-        salePrice,
-        quantity,
-        minStock,
-        updatedAt: now,
-      };
+    const existingProduct =
+      editingId !== null
+        ? await db.products.get(editingId)
+        : undefined;
+
+    if (editingId !== null && !existingProduct) {
+      setError("Produit introuvable.");
+      return;
+    }
+
+    const productData = {
+      name: form.name.trim(),
+      sku,
+      category: form.category,
+      description: form.description.trim(),
+      purchasePrice,
+      salePrice,
+
+      // Le stock ne peut être modifié que par les mouvements.
+      quantity: existingProduct?.quantity ?? quantity,
+
+      // Le stock initial est conservé lors des modifications.
+      initialQuantity: existingProduct?.initialQuantity ?? quantity,
+
+      minStock,
+      updatedAt: now,
+    };
 
       if (editingId !== null) {
         await db.products.update(editingId, productData);
@@ -571,12 +587,19 @@ export default function ProductsPage() {
                     />
                   </FormField>
 
-                  <FormField label="Quantité initiale *">
+                  <FormField
+                    label={
+                      editingId !== null
+                        ? "Stock actuel (géré via Mouvements)"
+                        : "Quantité initiale *"
+                    }
+                  >
                     <input
                       required
                       type="number"
                       min="0"
                       step="1"
+                      disabled={editingId !== null}
                       value={form.quantity}
                       onChange={(e) => setForm({ ...form, quantity: e.target.value })}
                       placeholder="20"

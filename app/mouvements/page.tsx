@@ -194,6 +194,7 @@ export default function MovementsPage() {
 
           await db.movements.add({
             productId,
+            productSyncId: product.syncId,
             productName: product.name,
             productSku: product.sku,
             type: form.type,

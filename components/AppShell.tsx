@@ -26,7 +26,13 @@ import {
 } from "firebase/auth";
 
 import { auth } from "@/lib/firebase";
-import { DatabaseProvider } from "@/lib/database/DatabaseProvider";
+import {
+  DatabaseProvider,
+  useDatabase,
+  useDatabaseUid,
+} from "@/lib/database/DatabaseProvider";
+
+import { syncUserData } from "@/lib/sync/sync-engine";
 
 const navigation = [
   {
@@ -74,6 +80,64 @@ const publicRoutes = [
   "/inscription",
   "/mot-de-passe-oublie",
 ];
+
+function SyncManager() {
+  const db = useDatabase();
+  const uid = useDatabaseUid();
+
+  useEffect(() => {
+    let active = true;
+    let syncing = false;
+
+    const synchronize = async () => {
+      if (!active || !navigator.onLine || syncing) return;
+
+      syncing = true;
+
+      try {
+        await syncUserData(uid, db);
+
+        if (active) {
+          console.info("[Nexora Sync] Synchronisation des produits terminée.");
+        }
+      } catch (error) {
+        if (active) {
+          console.error("[Nexora Sync] Erreur de synchronisation :", error);
+        }
+      } finally {
+        syncing = false;
+      }
+    };
+
+    void synchronize();
+
+    const handleOnline = () => {
+      void synchronize();
+    };
+
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        void synchronize();
+      }
+    };
+
+    window.addEventListener("online", handleOnline);
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    const intervalId = window.setInterval(() => {
+      void synchronize();
+    }, 30000);
+
+    return () => {
+      active = false;
+      window.removeEventListener("online", handleOnline);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.clearInterval(intervalId);
+    };
+  }, [uid, db]);
+
+  return null;
+}
 
 export default function AppShell({
   children,
@@ -226,6 +290,8 @@ export default function AppShell({
 
   return (
     <DatabaseProvider uid={user.uid}>
+      <SyncManager />
+
       <div className="min-h-screen bg-[#F5F7FB]">
 
         {/* ==========================================
