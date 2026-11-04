@@ -107,6 +107,18 @@ export default function ReportsPage() {
     (total, product) => total + product.purchasePrice * product.quantity,
     0
   );
+
+  // Valeur théorique du stock disponible au prix de vente
+  const potentialSalesValue = products.reduce(
+    (total, product) => total + product.salePrice * product.quantity,
+    0
+  );
+
+  // Marge théorique : elle n'est pas un bénéfice déjà réalisé
+  const potentialMargin = potentialSalesValue - stockValue;
+  const potentialMarginRate =
+    stockValue > 0 ? (potentialMargin / stockValue) * 100 : 0;
+
   const lowStock = products.filter(
     (product) => product.quantity <= product.minStock
   );
@@ -305,6 +317,51 @@ export default function ReportsPage() {
               tone="orange"
             />
           </div>
+        </section>
+
+        {/* Analyse financière */}
+        <section>
+          <div className="mb-4 flex items-center gap-2">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
+              <TrendingUp size={18} />
+            </div>
+            <div>
+              <h2 className="text-base font-bold text-slate-900">
+                Analyse financière
+              </h2>
+              <p className="text-xs text-slate-500">
+                Estimation de la valeur commerciale de votre inventaire
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            <StatCard
+              title="Valeur potentielle de vente"
+              value={formatFCFA(potentialSalesValue)}
+              caption="Au prix de vente des produits disponibles"
+              icon={<TrendingUp size={20} />}
+              tone="green"
+            />
+            <StatCard
+              title="Marge potentielle"
+              value={formatFCFA(potentialMargin)}
+              caption="Écart entre prix de vente et prix d'achat"
+              icon={<Activity size={20} />}
+              tone="violet"
+            />
+            <StatCard
+              title="Taux de marge potentiel"
+              value={`${potentialMarginRate.toFixed(1)} %`}
+              caption="Calculé sur la valeur d'achat du stock"
+              icon={<BarChart3 size={20} />}
+              tone="blue"
+            />
+          </div>
+          <p className="mt-3 text-xs leading-5 text-slate-500">
+            Ces montants sont des estimations basées sur le stock actuellement disponible.
+            La marge potentielle ne représente pas un bénéfice réellement encaissé.
+          </p>
         </section>
 
         {/* Filtre de période */}
