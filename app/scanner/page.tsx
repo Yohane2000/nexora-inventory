@@ -27,6 +27,7 @@ export default function ScannerPage() {
 const db = useDatabase();
 
 const scannerRef = useRef<Html5Qrcode | null>(null);
+const startingRef = useRef(false);
 const scanLock = useRef(false);
 
 const [scanning, setScanning] = useState(false);
@@ -166,7 +167,11 @@ if (scanLock.current) return;
 // ==========================================
 
 async function startScanner() {
-setError("");
+  // Évite de créer plusieurs instances, notamment avec React Strict Mode.
+  if (scannerRef.current || startingRef.current) return;
+
+  startingRef.current = true;
+  setError("");
 setSuccess("");
 setSelectedProduct(null);
 
@@ -182,6 +187,7 @@ try {
 
   const scanner = new Html5Qrcode("qr-reader");
 
+  // On conserve immédiatement la référence pour bloquer les démarrages concurrents.
   scannerRef.current = scanner;
 
   await scanner.start(
@@ -204,8 +210,18 @@ try {
 
   setScanning(true);
 } catch (err) {
-  scannerRef.current = null;
+  const scanner = scannerRef.current;
 
+  if (scanner) {
+    try {
+      if (scanner.isScanning) await scanner.stop();
+      scanner.clear();
+    } catch (cleanupError) {
+      console.warn("Nettoyage après échec du démarrage :", cleanupError);
+    }
+  }
+
+  scannerRef.current = null;
   setScanning(false);
 
   setError(
@@ -213,10 +229,24 @@ try {
       ? err.message
       : "Impossible d'activer la caméra. Vérifiez les autorisations."
   );
+} finally {
+  startingRef.current = false;
 }
 
-
 }
+
+// ==========================================
+// DÉMARRAGE AUTOMATIQUE DE LA CAMÉRA
+// ==========================================
+
+useEffect(() => {
+  // Laisse React monter #qr-reader avant d'initialiser la caméra.
+  const timer = window.setTimeout(() => {
+    void startScanner();
+  }, 150);
+
+  return () => window.clearTimeout(timer);
+}, []);
 
 // ==========================================
 // CHANGEMENT DU TYPE DE MOUVEMENT
@@ -324,6 +354,9 @@ try {
   setReason("Approvisionnement");
 
   scanLock.current = false;
+  window.setTimeout(() => {
+    void startScanner();
+  }, 150);
 } catch (err) {
   setError(
     err instanceof Error
@@ -475,8 +508,8 @@ return ( <main className="min-h-screen bg-[#F5F7FB] pb-10">
                   </p>
 
                   <p className="mt-2 max-w-xs text-xs leading-5 text-slate-400">
-                    Activez la caméra pour commencer à scanner
-                    les QR Codes de vos produits.
+La caméra va démarrer automatiquement.
+                    Autorisez son accès si votre navigateur le demande.
                   </p>
 
                 </div>
@@ -484,28 +517,27 @@ return ( <main className="min-h-screen bg-[#F5F7FB] pb-10">
 
             </div>
 
-            <button
-              type="button"
-              onClick={scanning ? stopScanner : startScanner}
-              disabled={loadingProduct}
-              className={`mt-5 flex w-full items-center justify-center gap-2 rounded-xl px-5 py-3.5 text-sm font-bold transition disabled:opacity-50 ${
-                scanning
-                  ? "border border-red-200 bg-red-50 text-red-600 hover:bg-red-100"
-                  : "bg-blue-700 text-white shadow-lg shadow-blue-700/20 hover:bg-blue-800"
-              }`}
-            >
-              {scanning ? (
-                <>
-                  <CameraOff size={19} />
-                  Arrêter la caméra
-                </>
-              ) : (
-                <>
-                  <Camera size={19} />
-                  Activer la caméra
-                </>
-              )}
-            </button>
+            {scanning ? (
+              <button
+                type="button"
+                onClick={() => void stopScanner()}
+                disabled={loadingProduct}
+                className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-5 py-3.5 text-sm font-bold text-red-600 transition hover:bg-red-100 disabled:opacity-50"
+              >
+                <CameraOff size={19} />
+                Arrêter la caméra
+              </button>
+            ) : error ? (
+              <button
+                type="button"
+                onClick={() => void startScanner()}
+                disabled={loadingProduct}
+                className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-blue-700 px-5 py-3.5 text-sm font-bold text-white shadow-lg shadow-blue-700/20 transition hover:bg-blue-800 disabled:opacity-50"
+              >
+                <Camera size={19} />
+                Réessayer
+              </button>
+            ) : null}
 
             <p className="mt-3 text-center text-[11px] text-slate-400">
               La caméra nécessite une autorisation de votre navigateur.
@@ -560,6 +592,9 @@ return ( <main className="min-h-screen bg-[#F5F7FB] pb-10">
                 setError("");
                 setSuccess("");
                 scanLock.current = false;
+                window.setTimeout(() => {
+                  void startScanner();
+                }, 150);
               }}
               className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
               aria-label="Fermer le produit"
@@ -769,6 +804,9 @@ return ( <main className="min-h-screen bg-[#F5F7FB] pb-10">
                 setError("");
                 setSuccess("");
                 scanLock.current = false;
+                window.setTimeout(() => {
+                  void startScanner();
+                }, 150);
               }}
               className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-600 hover:bg-slate-50"
             >
