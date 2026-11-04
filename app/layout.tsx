@@ -25,6 +25,15 @@ template: "%s | Nexora Inventory",
 description:
 "Gérez intelligemment vos stocks, produits et mouvements, même hors ligne.",
 applicationName: "Nexora Inventory",
+icons: {
+  icon: [
+    { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+    { url: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
+  ],
+  apple: [
+    { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+  ],
+},
 keywords: [
 "Nexora Inventory",
 "gestion de stock",
@@ -38,6 +47,8 @@ statusBarStyle: "default",
 title: "Nexora Inventory",
 },
 };
+
+
 
 export const viewport: Viewport = {
 themeColor: "#173B72",
