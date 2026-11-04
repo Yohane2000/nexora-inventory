@@ -294,19 +294,6 @@ export class NexoraDatabase extends Dexie {
     // SUPPRESSIONS
     // ==========================================
 
-    this.products.hook(
-      "deleting",
-      (_primKey, product, transaction) => {
-        if (!product.syncId) return;
-
-        return transaction.table("syncDeletions").put({
-          syncId: product.syncId,
-          entityType: "product",
-          syncStatus: "pending",
-          deletedAt: new Date().toISOString(),
-        });
-      }
-    );
 
     this.movements.hook(
       "deleting",

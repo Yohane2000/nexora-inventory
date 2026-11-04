@@ -192,16 +192,56 @@ export default function ProductsPage() {
     }
   }
 
-  async function deleteProduct(product: Product) {
-    const confirmed = window.confirm(`Supprimer le produit "${product.name}" ?`);
-    if (!confirmed || product.id === undefined) return;
+async function deleteProduct(product: Product) {
+  const confirmed = window.confirm(
+    `Supprimer le produit "${product.name}" ?`
+  );
 
-    try {
-      await db.products.delete(product.id);
-    } catch {
-      window.alert("Impossible de supprimer ce produit.");
-    }
+  if (!confirmed || product.id === undefined) return;
+
+  try {
+    await db.transaction(
+      "rw",
+      db.products,
+      db.syncDeletions,
+      async () => {
+        const currentProduct = await db.products.get(product.id!);
+
+        if (!currentProduct) return;
+
+        if (currentProduct.syncId) {
+          const existingDeletion = await db.syncDeletions
+            .where("syncId")
+            .equals(currentProduct.syncId)
+            .first();
+
+          const deletionData = {
+            syncId: currentProduct.syncId,
+            entityType: "product" as const,
+            syncStatus: "pending" as const,
+            deletedAt: new Date().toISOString(),
+          };
+
+          if (existingDeletion?.id !== undefined) {
+            await db.syncDeletions.update(
+              existingDeletion.id,
+              deletionData
+            );
+          } else {
+            await db.syncDeletions.add(deletionData);
+          }
+        }
+
+        await db.products.delete(product.id!);
+      }
+    );
+
+    console.log("[Nexora] Suppression locale enregistrée.");
+  } catch (error) {
+    console.error("[Nexora] Erreur de suppression :", error);
+    window.alert("Impossible de supprimer ce produit.");
   }
+}
 
   return (
     <main className="min-h-screen bg-[#F5F7FB] pb-12 text-slate-900">
