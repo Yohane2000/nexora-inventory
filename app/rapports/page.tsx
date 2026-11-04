@@ -157,6 +157,40 @@ export default function ReportsPage() {
     )
     .slice(0, 5);
 
+  // Classement des produits ayant enregistré le plus de sorties
+  // On utilise le nom et la référence conservés dans les mouvements,
+  // afin de garder l'historique même si un produit a été supprimé.
+  const topExitedProducts = (() => {
+    const grouped = new Map<
+      string,
+      { key: string; name: string; sku: string; quantity: number; movementCount: number }
+    >();
+
+    exits.forEach((movement) => {
+      const name = movement.productName || "Produit sans nom";
+      const sku = movement.productSku || "";
+      const key = `${sku}::${name}`;
+      const existing = grouped.get(key);
+
+      if (existing) {
+        existing.quantity += movement.quantity;
+        existing.movementCount += 1;
+      } else {
+        grouped.set(key, {
+          key,
+          name,
+          sku,
+          quantity: movement.quantity,
+          movementCount: 1,
+        });
+      }
+    });
+
+    return [...grouped.values()]
+      .sort((a, b) => b.quantity - a.quantity)
+      .slice(0, 5);
+  })();
+
   function resetPeriod() {
     setPeriod("30");
     setStartDate("");
@@ -610,6 +644,85 @@ export default function ReportsPage() {
                       <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100">
                         <div
                           className="h-full rounded-full bg-gradient-to-r from-blue-600 to-cyan-400"
+                          style={{ width: `${width}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        {/* Produits les plus sortis */}
+        <section className="overflow-hidden rounded-[24px] border border-slate-200/80 bg-white shadow-sm shadow-slate-200/40">
+          <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-5 sm:px-6">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-50 text-orange-700">
+                <ArrowUpFromLine size={19} />
+              </div>
+              <div>
+                <h2 className="text-sm font-bold text-slate-900">
+                  Produits les plus sortis
+                </h2>
+                <p className="mt-1 text-xs text-slate-500">
+                  Classement selon les quantités sorties sur la période sélectionnée.
+                </p>
+              </div>
+            </div>
+            <span className="hidden rounded-full bg-orange-50 px-3 py-1.5 text-[11px] font-semibold text-orange-700 sm:inline-flex">
+              {periodLabel}
+            </span>
+          </div>
+
+          {topExitedProducts.length === 0 ? (
+            <EmptyState
+              icon={<ArrowUpFromLine size={22} />}
+              title="Aucune sortie enregistrée"
+              description="Les produits apparaîtront ici dès qu'une sortie de stock sera enregistrée sur cette période."
+            />
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {topExitedProducts.map((product, index) => {
+                const maxQuantity = Math.max(
+                  ...topExitedProducts.map((item) => item.quantity),
+                  1
+                );
+                const width = (product.quantity / maxQuantity) * 100;
+
+                return (
+                  <div
+                    key={product.key}
+                    className="flex items-center gap-3 px-5 py-4 sm:px-6"
+                  >
+                    <div
+                      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-xs font-extrabold ${
+                        index === 0
+                          ? "bg-orange-100 text-orange-800"
+                          : "bg-slate-100 text-slate-600"
+                      }`}
+                    >
+                      {String(index + 1).padStart(2, "0")}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-col justify-between gap-1 sm:flex-row sm:items-center">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-bold text-slate-800">
+                            {product.name}
+                          </p>
+                          <p className="mt-0.5 text-[11px] text-slate-400">
+                            {product.sku ? `Réf. ${product.sku} · ` : ""}
+                            {product.movementCount} mouvement(s) de sortie
+                          </p>
+                        </div>
+                        <p className="shrink-0 text-sm font-extrabold text-orange-700 sm:text-right">
+                          {formatNumber(product.quantity)} unités sorties
+                        </p>
+                      </div>
+                      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100">
+                        <div
+                          className="h-full rounded-full bg-gradient-to-r from-orange-500 to-amber-400"
                           style={{ width: `${width}%` }}
                         />
                       </div>
