@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { QRCodeSVG } from "qrcode.react";
 import { useLiveQuery } from "dexie-react-hooks";
 import type { FormEvent, ReactNode } from "react";
 import { useDatabase } from "@/lib/database/DatabaseProvider";
@@ -20,6 +21,8 @@ import {
   Wallet,
   CheckCircle2,
   PackageSearch,
+  QrCode,
+  Printer,
 } from "lucide-react";
 
 const emptyForm = {
@@ -61,6 +64,7 @@ export default function ProductsPage() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [error, setError] = useState("");
+  const [qrProduct, setQrProduct] = useState<Product | null>(null);
 
   const filteredProducts = products.filter((product) => {
     const query = search.trim().toLowerCase();
@@ -178,10 +182,14 @@ export default function ProductsPage() {
       if (editingId !== null) {
         await db.products.update(editingId, productData);
       } else {
-        await db.products.add({
+        const newProductId = await db.products.add({
           ...productData,
           createdAt: now,
         });
+
+        // Le hook Dexie attribue le syncId unique à la création.
+        const createdProduct = await db.products.get(newProductId);
+        if (createdProduct) setQrProduct(createdProduct);
       }
 
       setShowForm(false);
@@ -191,6 +199,63 @@ export default function ProductsPage() {
       setError("Impossible d'enregistrer ce produit.");
     }
   }
+
+function printProductQr(product: Product) {
+  if (!product.syncId) {
+    window.alert("Ce produit ne possède pas encore d'identifiant QR. Actualisez la page puis réessayez.");
+    return;
+  }
+
+  const svg = document.getElementById(`product-qr-${product.id}`)?.outerHTML;
+  if (!svg) {
+    window.alert("Impossible de préparer le QR Code.");
+    return;
+  }
+
+  const printWindow = window.open("", "_blank", "width=520,height=640");
+  if (!printWindow) {
+    window.alert("Autorisez les fenêtres contextuelles pour imprimer cette étiquette.");
+    return;
+  }
+
+  const escapeHtml = (value: string) =>
+    value.replace(/[&<>"']/g, (character) => {
+      const entities: Record<string, string> = {
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      };
+      return entities[character];
+    });
+
+  printWindow.document.write(`<!doctype html>
+    <html lang="fr">
+      <head>
+        <meta charset="utf-8" />
+        <title>Étiquette - ${escapeHtml(product.name)}</title>
+        <style>
+          body { font-family: Arial, sans-serif; display: flex; justify-content: center; padding: 28px; color: #111827; }
+          .label { width: 280px; text-align: center; border: 1px solid #d1d5db; border-radius: 12px; padding: 20px; }
+          svg { width: 190px; height: 190px; }
+          h1 { font-size: 18px; margin: 12px 0 5px; }
+          p { font-size: 12px; margin: 4px 0; color: #4b5563; }
+          @media print { body { padding: 0; } .label { border: 0; } }
+        </style>
+      </head>
+      <body>
+        <main class="label">
+          ${svg}
+          <h1>${escapeHtml(product.name)}</h1>
+          <p>Référence : ${escapeHtml(product.sku)}</p>
+          <p>Nexora Inventory</p>
+        </main>
+        <script>window.onload = () => { window.print(); };</script>
+      </body>
+    </html>`);
+  printWindow.document.close();
+}
 
 async function deleteProduct(product: Product) {
   const confirmed = window.confirm(
@@ -486,6 +551,14 @@ async function deleteProduct(product: Product) {
 
                       <div className="flex items-center justify-end gap-2 border-t border-slate-100 pt-3 md:border-0 md:pt-0">
                         <button
+                          onClick={() => setQrProduct(product)}
+                          aria-label={`Afficher le QR Code de ${product.name}`}
+                          title="Voir le QR Code"
+                          className="rounded-lg border border-slate-200 p-2.5 text-slate-500 transition hover:border-violet-200 hover:bg-violet-50 hover:text-violet-700 focus:outline-none focus:ring-4 focus:ring-violet-500/10"
+                        >
+                          <QrCode size={16} />
+                        </button>
+                        <button
                           onClick={() => openEditForm(product)}
                           aria-label={`Modifier ${product.name}`}
                           title="Modifier"
@@ -686,6 +759,74 @@ async function deleteProduct(product: Product) {
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {/* MODALE QR CODE PRODUIT */}
+      {qrProduct && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setQrProduct(null);
+          }}
+        >
+          <section className="w-full max-w-sm rounded-3xl bg-white p-6 text-center shadow-2xl">
+            <div className="mb-4 flex items-center justify-between">
+              <div className="text-left">
+                <h2 className="text-lg font-extrabold text-slate-900">QR Code du produit</h2>
+                <p className="mt-1 text-xs text-slate-500">Identifiant unique Nexora</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setQrProduct(null)}
+                aria-label="Fermer"
+                className="rounded-xl bg-slate-100 p-2.5 text-slate-500 hover:bg-slate-200"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {qrProduct.syncId ? (
+              <div className="mx-auto flex w-fit flex-col items-center rounded-2xl border border-slate-200 bg-white p-4">
+                <QRCodeSVG
+                  id={`product-qr-${qrProduct.id}`}
+                  value={`NEXORA:PRODUCT:${qrProduct.syncId}`}
+                  size={220}
+                  level="H"
+                  includeMargin
+                />
+                <p className="mt-3 max-w-[220px] break-all text-[10px] text-slate-400">
+                  NEXORA:PRODUCT:{qrProduct.syncId}
+                </p>
+              </div>
+            ) : (
+              <p role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">
+                Identifiant QR indisponible pour ce produit. Actualisez la page et réessayez.
+              </p>
+            )}
+
+            <h3 className="mt-4 text-base font-bold text-slate-900">{qrProduct.name}</h3>
+            <p className="mt-1 text-sm text-slate-500">Référence : {qrProduct.sku}</p>
+
+            <div className="mt-5 flex flex-col gap-2 sm:flex-row">
+              <button
+                type="button"
+                disabled={!qrProduct.syncId}
+                onClick={() => printProductQr(qrProduct)}
+                className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-blue-700 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Printer size={17} />
+                Imprimer l'étiquette
+              </button>
+              <button
+                type="button"
+                onClick={() => setQrProduct(null)}
+                className="rounded-xl border border-slate-200 px-4 py-3 text-sm font-bold text-slate-600 hover:bg-slate-50"
+              >
+                Fermer
+              </button>
+            </div>
+          </section>
         </div>
       )}
     </main>
