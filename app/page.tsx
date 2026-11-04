@@ -21,6 +21,8 @@ import {
   Wallet,
   Download,
 } from "lucide-react";
+import { onAuthStateChanged } from "firebase/auth";
+import { auth } from "@/lib/firebase";
 
 const formatFCFA = (amount: number) =>
   new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 0 }).format(amount) + " FCFA";
@@ -42,6 +44,30 @@ type BeforeInstallPromptEvent = Event & {
 
 export default function Home() {
   const db = useDatabase();
+
+  const [userName, setUserName] = useState("");
+
+useEffect(() => {
+  const unsubscribe = onAuthStateChanged(auth, (user) => {
+    if (!user) {
+      setUserName("");
+      return;
+    }
+
+    const displayName = user.displayName?.trim();
+
+    if (displayName) {
+      setUserName(displayName.split(/\s+/)[0]);
+      return;
+    }
+
+    const emailName = user.email?.split("@")[0];
+
+    setUserName(emailName || "");
+  });
+
+  return () => unsubscribe();
+}, []);
 
   const products = useLiveQuery(() => db.products.toArray(), [db], []);
   const movements = useLiveQuery(
@@ -173,7 +199,7 @@ const [isInstalled, setIsInstalled] = useState(false);
                 {currentDate || "Chargement..."}
               </p>
               <h1 className="mt-2 text-2xl font-bold tracking-tight sm:text-3xl lg:text-4xl">
-                Bonjour, Yohane
+                Bonjour{userName ? `, ${userName}` : ""} 
               </h1>
               <p className="mt-3 max-w-xl text-sm leading-6 text-blue-100 sm:text-base">
                 Retrouvez en un coup d’œil l’état de votre inventaire et les dernières opérations.
