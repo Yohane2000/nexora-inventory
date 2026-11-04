@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Html5Qrcode } from "html5-qrcode";
 import { QRCodeSVG } from "qrcode.react";
 import { useLiveQuery } from "dexie-react-hooks";
 import type { FormEvent, ReactNode } from "react";
 import { useDatabase } from "@/lib/database/DatabaseProvider";
-import type { Product } from "@/lib/database/db";
+import type { Product, MovementType } from "@/lib/database/db";
 import {
   Plus,
   Search,
@@ -23,6 +24,9 @@ import {
   PackageSearch,
   QrCode,
   Printer,
+  Camera,
+  CameraOff,
+  ScanLine,
 } from "lucide-react";
 
 const emptyForm = {
@@ -46,6 +50,16 @@ const categories = [
   "Autres",
 ];
 
+const QR_PREFIX = "NEXORA:PRODUCT:";
+
+type BatchItem = {
+  product: Product;
+  type: MovementType;
+  quantity: number;
+  reason: string;
+  note: string;
+};
+
 const formatFCFA = (amount: number) =>
   new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 0 }).format(amount) + " FCFA";
 
@@ -65,6 +79,185 @@ export default function ProductsPage() {
   const [form, setForm] = useState(emptyForm);
   const [error, setError] = useState("");
   const [qrProduct, setQrProduct] = useState<Product | null>(null);
+
+  // Scanner groupé intégré au catalogue
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [scannerRunning, setScannerRunning] = useState(false);
+  const [scannerError, setScannerError] = useState("");
+  const [scannerMessage, setScannerMessage] = useState("");
+  const [batchItems, setBatchItems] = useState<BatchItem[]>([]);
+  const [savingBatch, setSavingBatch] = useState(false);
+  const [batchSuccess, setBatchSuccess] = useState("");
+  const scannerRef = useRef<Html5Qrcode | null>(null);
+  const lastScanRef = useRef<{ value: string; at: number }>({ value: "", at: 0 });
+
+  const handleBatchScan = useCallback(async (decodedText: string) => {
+    const now = Date.now();
+    if (
+      lastScanRef.current.value === decodedText &&
+      now - lastScanRef.current.at < 1800
+    ) return;
+    lastScanRef.current = { value: decodedText, at: now };
+
+    if (!decodedText.startsWith(QR_PREFIX)) {
+      setScannerMessage("Ce QR Code ne correspond pas à un produit Nexora.");
+      return;
+    }
+
+    const syncId = decodedText.slice(QR_PREFIX.length).trim();
+    if (!syncId) {
+      setScannerMessage("Identifiant produit invalide.");
+      return;
+    }
+
+    try {
+      const product = await db.products.where("syncId").equals(syncId).first();
+      if (!product || product.id === undefined) {
+        setScannerMessage("Produit introuvable dans cet inventaire.");
+        return;
+      }
+
+      setBatchItems((current) => {
+        if (current.some((item) => item.product.id === product.id)) {
+          setScannerMessage(`${product.name} est déjà dans la liste.`);
+          return current;
+        }
+        setScannerMessage(`${product.name} ajouté à la session.`);
+        return [...current, {
+          product,
+          type: "ENTREE",
+          quantity: 1,
+          reason: "Approvisionnement",
+          note: "",
+        }];
+      });
+    } catch {
+      setScannerMessage("Impossible de rechercher ce produit dans la base locale.");
+    }
+  }, [db]);
+
+  useEffect(() => {
+    if (!scannerOpen) return;
+
+    let cancelled = false;
+    const scanner = new Html5Qrcode("products-batch-qr-reader");
+    scannerRef.current = scanner;
+
+    scanner.start(
+      { facingMode: "environment" },
+      { fps: 10, qrbox: { width: 230, height: 230 }, aspectRatio: 1 },
+      (decodedText) => { void handleBatchScan(decodedText); },
+      () => undefined
+    ).then(() => {
+      if (!cancelled) {
+        setScannerRunning(true);
+        setScannerError("");
+      } else {
+        void scanner.stop().catch(() => undefined);
+      }
+    }).catch((err: unknown) => {
+      if (!cancelled) {
+        setScannerError(
+          err instanceof Error
+            ? err.message
+            : "Impossible d'activer la caméra. Vérifiez les autorisations."
+        );
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      setScannerRunning(false);
+      if (scannerRef.current === scanner) scannerRef.current = null;
+      if (scanner.isScanning) {
+        void scanner.stop().then(() => scanner.clear()).catch(() => undefined);
+      } else {
+        try { scanner.clear(); } catch { /* scanner déjà nettoyé */ }
+      }
+    };
+  }, [scannerOpen, handleBatchScan]);
+
+  function updateBatchItem(
+    productId: number | undefined,
+    changes: Partial<Pick<BatchItem, "type" | "quantity" | "reason" | "note">>
+  ) {
+    setBatchItems((current) =>
+      current.map((item) =>
+        item.product.id === productId ? { ...item, ...changes } : item
+      )
+    );
+  }
+
+  async function saveBatchMovements() {
+    if (savingBatch || batchItems.length === 0) return;
+    setSavingBatch(true);
+    setScannerError("");
+    setBatchSuccess("");
+
+    try {
+      for (const item of batchItems) {
+        if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
+          throw new Error(`Quantité invalide pour ${item.product.name}.`);
+        }
+      }
+
+      await db.transaction("rw", db.products, db.movements, async () => {
+        for (const item of batchItems) {
+          const productId = item.product.id;
+          if (productId === undefined) {
+            throw new Error(`Identifiant invalide pour ${item.product.name}.`);
+          }
+
+          const currentProduct = await db.products.get(productId);
+          if (!currentProduct) {
+            throw new Error(`Le produit ${item.product.name} n'existe plus.`);
+          }
+
+          const previousStock = currentProduct.quantity;
+          const newStock = item.type === "ENTREE"
+            ? previousStock + item.quantity
+            : previousStock - item.quantity;
+
+          if (newStock < 0) {
+            throw new Error(
+              `Stock insuffisant pour ${currentProduct.name}. Disponible : ${previousStock}.`
+            );
+          }
+
+          const timestamp = new Date().toISOString();
+          await db.products.update(productId, {
+            quantity: newStock,
+            updatedAt: timestamp,
+          });
+
+          await db.movements.add({
+            productId,
+            productSyncId: currentProduct.syncId,
+            productName: currentProduct.name,
+            productSku: currentProduct.sku,
+            type: item.type,
+            quantity: item.quantity,
+            previousStock,
+            newStock,
+            reason: item.reason.trim() || (item.type === "ENTREE" ? "Approvisionnement" : "Vente"),
+            note: item.note.trim(),
+            createdAt: timestamp,
+          });
+        }
+      });
+
+      setBatchSuccess(`${batchItems.length} mouvement(s) enregistré(s) avec succès.`);
+      setBatchItems([]);
+      setScannerMessage("");
+      setScannerOpen(false);
+    } catch (err) {
+      setScannerError(
+        err instanceof Error ? err.message : "Impossible d'enregistrer les mouvements."
+      );
+    } finally {
+      setSavingBatch(false);
+    }
+  }
 
   const filteredProducts = products.filter((product) => {
     const query = search.trim().toLowerCase();
@@ -326,14 +519,172 @@ async function deleteProduct(product: Product) {
             </p>
           </div>
 
-          <button
-            onClick={openAddForm}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-700 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-blue-700/20 transition hover:-translate-y-0.5 hover:bg-blue-800 focus:outline-none focus:ring-4 focus:ring-blue-200"
-          >
-            <Plus size={18} />
-            Nouveau produit
-          </button>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <button
+              type="button"
+              onClick={() => {
+                setBatchSuccess("");
+                setScannerError("");
+                setScannerMessage("");
+                setScannerOpen((open) => !open);
+              }}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-blue-200 bg-white px-5 py-3 text-sm font-bold text-blue-700 transition hover:bg-blue-50"
+            >
+              {scannerOpen ? <CameraOff size={18} /> : <ScanLine size={18} />}
+              {scannerOpen ? "Fermer le scanner" : "Scanner plusieurs produits"}
+            </button>
+            <button
+              onClick={openAddForm}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-700 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-blue-700/20 transition hover:-translate-y-0.5 hover:bg-blue-800 focus:outline-none focus:ring-4 focus:ring-blue-200"
+            >
+              <Plus size={18} />
+              Nouveau produit
+            </button>
+          </div>
         </section>
+
+        {/* SCANNER MULTI-PRODUITS */}
+        {scannerOpen && (
+          <section className="grid gap-5 rounded-2xl border border-blue-100 bg-white p-4 shadow-sm sm:p-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+            <div>
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="font-bold text-slate-900">Scanner les produits</h2>
+                  <p className="mt-1 text-xs text-slate-500">Scanne plusieurs références sans quitter le catalogue.</p>
+                </div>
+                <span className={`rounded-full px-3 py-1 text-[11px] font-bold ${scannerRunning ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+                  {scannerRunning ? "Caméra active" : "Initialisation"}
+                </span>
+              </div>
+              <div className="overflow-hidden rounded-2xl bg-slate-950">
+                <div id="products-batch-qr-reader" className="min-h-[280px] w-full" />
+              </div>
+              {scannerError && (
+                <p role="alert" className="mt-3 rounded-xl bg-rose-50 p-3 text-xs font-medium text-rose-700">{scannerError}</p>
+              )}
+              {scannerMessage && (
+                <p aria-live="polite" className="mt-3 rounded-xl bg-blue-50 p-3 text-xs font-medium text-blue-700">{scannerMessage}</p>
+              )}
+              <p className="mt-3 text-[11px] leading-5 text-slate-400">
+                Chaque produit est ajouté une seule fois. Après le scan, règle son type d'opération et sa quantité dans la liste.
+              </p>
+            </div>
+
+            <div>
+              <div className="mb-3 flex items-center justify-between">
+                <div>
+                  <h3 className="font-bold text-slate-900">Session de scan</h3>
+                  <p className="mt-1 text-xs text-slate-500">{batchItems.length} produit(s) ajouté(s)</p>
+                </div>
+                {batchItems.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setBatchItems([])}
+                    className="text-xs font-semibold text-rose-600 hover:text-rose-700"
+                  >
+                    Vider la liste
+                  </button>
+                )}
+              </div>
+
+              {batchItems.length === 0 ? (
+                <div className="flex min-h-40 flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 p-5 text-center">
+                  <QrCode size={28} className="mb-2 text-slate-300" />
+                  <p className="text-sm font-semibold text-slate-700">Aucun produit scanné</p>
+                  <p className="mt-1 text-xs text-slate-400">Présente un QR Code Nexora devant la caméra.</p>
+                </div>
+              ) : (
+                <div className="max-h-[430px] space-y-3 overflow-y-auto pr-1">
+                  {batchItems.map((item) => (
+                    <div key={item.product.id} className="rounded-xl border border-slate-200 p-3">
+                      <div className="mb-3 flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-bold text-slate-800">{item.product.name}</p>
+                          <p className="mt-1 text-[11px] text-slate-400">{item.product.sku} · Stock actuel : {item.product.quantity}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setBatchItems((current) => current.filter((entry) => entry.product.id !== item.product.id))}
+                          aria-label={`Retirer ${item.product.name}`}
+                          className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <label className="text-[11px] font-semibold text-slate-500">
+                          Opération
+                          <select
+                            value={item.type}
+                            onChange={(e) => {
+                              const type = e.target.value as MovementType;
+                              updateBatchItem(item.product.id, {
+                                type,
+                                reason: type === "ENTREE" ? "Approvisionnement" : "Vente",
+                              });
+                            }}
+                            className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs text-slate-700"
+                          >
+                            <option value="ENTREE">Entrée</option>
+                            <option value="SORTIE">Sortie</option>
+                          </select>
+                        </label>
+                        <label className="text-[11px] font-semibold text-slate-500">
+                          Quantité
+                          <input
+                            type="number"
+                            min="1"
+                            step="1"
+                            value={item.quantity}
+                            onChange={(e) => updateBatchItem(item.product.id, { quantity: Number(e.target.value) })}
+                            className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-2 text-xs text-slate-700"
+                          />
+                        </label>
+                      </div>
+                      <label className="mt-2 block text-[11px] font-semibold text-slate-500">
+                        Motif
+                        <input
+                          value={item.reason}
+                          onChange={(e) => updateBatchItem(item.product.id, { reason: e.target.value })}
+                          className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-700"
+                        />
+                      </label>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {batchItems.length > 0 && (
+                <div className="mt-4 rounded-xl bg-slate-50 p-3">
+                  <div className="flex justify-between text-xs text-slate-600">
+                    <span>Entrées</span>
+                    <strong>{batchItems.filter((item) => item.type === "ENTREE").length}</strong>
+                  </div>
+                  <div className="mt-1 flex justify-between text-xs text-slate-600">
+                    <span>Sorties</span>
+                    <strong>{batchItems.filter((item) => item.type === "SORTIE").length}</strong>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={saveBatchMovements}
+                    disabled={savingBatch}
+                    className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-blue-700 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-800 disabled:opacity-50"
+                  >
+                    <Save size={17} />
+                    {savingBatch ? "Enregistrement..." : "Valider tous les mouvements"}
+                  </button>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
+        {batchSuccess && (
+          <div role="status" className="rounded-xl border border-emerald-100 bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">
+            <CheckCircle2 size={18} className="mr-2 inline" />
+            {batchSuccess}
+          </div>
+        )}
 
         {/* INDICATEURS */}
         <section>
