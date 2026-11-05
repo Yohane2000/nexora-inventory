@@ -55,7 +55,7 @@ const QR_PREFIX = "NEXORA:PRODUCT:";
 type BatchItem = {
   product: Product;
   type: MovementType;
-  quantity: number;
+  quantity: number | string;
   reason: string;
   note: string;
 };
@@ -198,7 +198,8 @@ export default function ProductsPage() {
 
     try {
       for (const item of batchItems) {
-        if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
+        const quantity = Number(item.quantity);
+        if (!Number.isInteger(quantity) || quantity <= 0) {
           throw new Error(`Quantité invalide pour ${item.product.name}.`);
         }
       }
@@ -215,10 +216,11 @@ export default function ProductsPage() {
             throw new Error(`Le produit ${item.product.name} n'existe plus.`);
           }
 
+          const quantity = Number(item.quantity);
           const previousStock = currentProduct.quantity;
           const newStock = item.type === "ENTREE"
-            ? previousStock + item.quantity
-            : previousStock - item.quantity;
+            ? previousStock + quantity
+            : previousStock - quantity;
 
           if (newStock < 0) {
             throw new Error(
@@ -238,7 +240,7 @@ export default function ProductsPage() {
             productName: currentProduct.name,
             productSku: currentProduct.sku,
             type: item.type,
-            quantity: item.quantity,
+            quantity,
             previousStock,
             newStock,
             reason: item.reason.trim() || (item.type === "ENTREE" ? "Approvisionnement" : "Vente"),
@@ -556,9 +558,7 @@ async function deleteProduct(product: Product) {
           <section className="rounded-2xl border border-blue-100 bg-white p-5 shadow-sm sm:p-6">
             <div className="mb-4">
               <h2 className="text-lg font-bold text-slate-900">Quel mouvement souhaitez-vous effectuer ?</h2>
-              <p className="mt-1 text-sm text-slate-500">
-                Choisissez le type d'opération avant de commencer. Tous les produits de cette session utiliseront ce choix.
-              </p>
+              <p className="mt-1 text-sm text-slate-500">Choisissez le type d'opération avant de commencer le scan. Tous les produits de cette session utiliseront ce choix.</p>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <button
@@ -571,13 +571,8 @@ async function deleteProduct(product: Product) {
                 }}
                 className="flex min-h-24 items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-left transition hover:bg-emerald-100"
               >
-                <span className="flex h-11 w-11 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
-                  <Plus size={22} />
-                </span>
-                <span>
-                  <span className="block font-bold text-emerald-800">Entrée de stock</span>
-                  <span className="mt-1 block text-xs text-emerald-700">Ajouter des quantités au stock</span>
-                </span>
+                <span className="flex h-11 w-11 items-center justify-center rounded-full bg-emerald-100 text-emerald-700"><Plus size={22} /></span>
+                <span><span className="block font-bold text-emerald-800">Entrée de stock</span><span className="mt-1 block text-xs text-emerald-700">Ajouter des quantités au stock</span></span>
               </button>
               <button
                 type="button"
@@ -589,22 +584,11 @@ async function deleteProduct(product: Product) {
                 }}
                 className="flex min-h-24 items-center gap-3 rounded-xl border border-orange-200 bg-orange-50 p-4 text-left transition hover:bg-orange-100"
               >
-                <span className="flex h-11 w-11 items-center justify-center rounded-full bg-orange-100 text-orange-700">
-                  <Package size={22} />
-                </span>
-                <span>
-                  <span className="block font-bold text-orange-800">Sortie de stock</span>
-                  <span className="mt-1 block text-xs text-orange-700">Retirer des quantités du stock</span>
-                </span>
+                <span className="flex h-11 w-11 items-center justify-center rounded-full bg-orange-100 text-orange-700"><Package size={22} /></span>
+                <span><span className="block font-bold text-orange-800">Sortie de stock</span><span className="mt-1 block text-xs text-orange-700">Retirer des quantités du stock</span></span>
               </button>
             </div>
-            <button
-              type="button"
-              onClick={() => setShowScannerModeChoice(false)}
-              className="mt-4 text-sm font-semibold text-slate-500 hover:text-slate-700"
-            >
-              Annuler
-            </button>
+            <button type="button" onClick={() => setShowScannerModeChoice(false)} className="mt-4 text-sm font-semibold text-slate-500 hover:text-slate-700">Annuler</button>
           </section>
         )}
 
@@ -615,7 +599,7 @@ async function deleteProduct(product: Product) {
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
                   <h2 className="font-bold text-slate-900">Scanner les produits — {scannerMode === "SORTIE" ? "Sortie de stock" : "Entrée de stock"}</h2>
-                  <p className="mt-1 text-xs text-slate-500">Scanne plusieurs références sans quitter le catalogue.</p>
+                  <p className="mt-1 text-xs text-slate-500">Scannez plusieurs références pour cette même opération.</p>
                 </div>
                 <span className={`rounded-full px-3 py-1 text-[11px] font-bold ${scannerRunning ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
                   {scannerRunning ? "Caméra active" : "Initialisation"}
@@ -631,7 +615,7 @@ async function deleteProduct(product: Product) {
                 <p aria-live="polite" className="mt-3 rounded-xl bg-blue-50 p-3 text-xs font-medium text-blue-700">{scannerMessage}</p>
               )}
               <p className="mt-3 text-[11px] leading-5 text-slate-400">
-                Chaque produit est ajouté une seule fois. Le type de mouvement est fixé pour toute cette session ; ajustez les quantités avant validation.
+                Chaque produit est ajouté une seule fois. Le type de mouvement est fixé pour toute cette session ; vous pouvez ajuster les quantités avant validation.
               </p>
             </div>
 
@@ -690,7 +674,7 @@ async function deleteProduct(product: Product) {
                             min="1"
                             step="1"
                             value={item.quantity}
-                            onChange={(e) => updateBatchItem(item.product.id, { quantity: Number(e.target.value) })}
+                            onChange={(e) => updateBatchItem(item.product.id, { quantity: e.target.value })}
                             className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-2 text-xs text-slate-700"
                           />
                         </label>
