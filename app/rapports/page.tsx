@@ -130,6 +130,41 @@ export default function ReportsPage() {
     (movement) => movement.type === "SORTIE"
   );
 
+  // Ventes réelles : seules les sorties dont le motif est "Vente"
+  // sont prises en compte. Les anciennes ventes sans prix historiques
+  // sont exclues pour éviter de calculer un résultat financier inexact.
+  const salesMovements = filteredMovements.filter(
+    (movement) =>
+      movement.type === "SORTIE" &&
+      movement.reason.trim().toLocaleLowerCase("fr-FR") === "vente"
+  );
+
+  const salesWithPriceHistory = salesMovements.filter(
+    (movement) =>
+      typeof movement.purchasePriceAtMovement === "number" &&
+      Number.isFinite(movement.purchasePriceAtMovement) &&
+      typeof movement.salePriceAtMovement === "number" &&
+      Number.isFinite(movement.salePriceAtMovement)
+  );
+
+  const salesMissingPriceHistory = salesMovements.length - salesWithPriceHistory.length;
+
+  const salesRevenue = salesWithPriceHistory.reduce(
+    (total, movement) =>
+      total + movement.salePriceAtMovement! * movement.quantity,
+    0
+  );
+
+  const salesCost = salesWithPriceHistory.reduce(
+    (total, movement) =>
+      total + movement.purchasePriceAtMovement! * movement.quantity,
+    0
+  );
+
+  const grossProfit = salesRevenue - salesCost;
+  const grossMarginRate =
+    salesRevenue > 0 ? (grossProfit / salesRevenue) * 100 : 0;
+
   const totalEntries = entries.reduce(
     (total, movement) => total + movement.quantity,
     0
@@ -395,6 +430,70 @@ export default function ReportsPage() {
           <p className="mt-3 text-xs leading-5 text-slate-500">
             Ces montants sont des estimations basées sur le stock actuellement disponible.
             La marge potentielle ne représente pas un bénéfice réellement encaissé.
+          </p>
+        </section>
+
+        {/* Rentabilité réelle des ventes */}
+        <section>
+          <div className="mb-4 flex items-center gap-2">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
+              <TrendingUp size={18} />
+            </div>
+            <div>
+              <h2 className="text-base font-bold text-slate-900">
+                Rentabilité réelle des ventes
+              </h2>
+              <p className="text-xs text-slate-500">
+                Résultats calculés à partir des ventes de la période sélectionnée
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <StatCard
+              title="Chiffre d'affaires"
+              value={formatFCFA(salesRevenue)}
+              caption="Prix de vente historique × quantités vendues"
+              icon={<TrendingUp size={20} />}
+              tone="green"
+            />
+            <StatCard
+              title="Coût des ventes"
+              value={formatFCFA(salesCost)}
+              caption="Prix d'achat historique × quantités vendues"
+              icon={<Package size={20} />}
+              tone="blue"
+            />
+            <StatCard
+              title="Bénéfice brut"
+              value={formatFCFA(grossProfit)}
+              caption="Chiffre d'affaires − coût des ventes"
+              icon={<Activity size={20} />}
+              tone={grossProfit >= 0 ? "violet" : "orange"}
+            />
+            <StatCard
+              title="Marge sur chiffre d'affaires"
+              value={`${grossMarginRate.toFixed(1)} %`}
+              caption="Bénéfice brut ÷ chiffre d'affaires"
+              icon={<BarChart3 size={20} />}
+              tone="violet"
+            />
+          </div>
+
+          {salesMissingPriceHistory > 0 && (
+            <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">
+              {salesMissingPriceHistory} ancienne(s) vente(s) ne possède(nt) pas
+              d'historique de prix. Elle(s) est/sont exclue(s) de ces calculs
+              pour éviter une estimation incorrecte. Les nouvelles ventes
+              enregistrées après la mise à jour seront prises en compte.
+            </p>
+          )}
+
+          <p className="mt-3 text-xs leading-5 text-slate-500">
+            Le bénéfice affiché est un bénéfice brut estimé sur les marchandises
+            vendues. Il ne déduit pas les autres charges (transport, salaires,
+            loyers, taxes, etc.) et ne représente pas nécessairement les sommes
+            déjà encaissées.
           </p>
         </section>
 

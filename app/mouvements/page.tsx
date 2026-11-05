@@ -201,6 +201,8 @@ export default function MovementsPage() {
             quantity,
             previousStock,
             newStock,
+            purchasePriceAtMovement: product.purchasePrice,
+            salePriceAtMovement: product.salePrice,
             reason: form.reason,
             note: form.note.trim(),
             createdAt: now,

@@ -31,6 +31,9 @@ export interface Movement {
   syncId?: string;
   syncStatus?: SyncStatus;
 
+  purchasePriceAtMovement?: number;
+  salePriceAtMovement?: number;
+
   productId: number;
   productSyncId?: string;
 

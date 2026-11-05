@@ -202,6 +202,8 @@ export default function ScannerPage() {
             quantity,
             previousStock,
             newStock,
+            purchasePriceAtMovement: currentProduct.purchasePrice,
+            salePriceAtMovement: currentProduct.salePrice,
             reason: item.reason.trim() || (scannerMode === "ENTREE" ? "Approvisionnement" : "Vente"),
             note: "",
             createdAt: timestamp,
