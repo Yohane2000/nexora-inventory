@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
 import { auth, firestore } from "@/lib/firebase";
 import { doc, getDoc, setDoc } from "firebase/firestore";
+import { sendPasswordResetEmail, signOut } from "firebase/auth";
 import {
   Building2,
   Save,
@@ -29,6 +30,11 @@ import {
   ImagePlus,
   Trash2,
   User,
+  LockKeyhole,
+  BadgeCheck,
+  KeyRound,
+  LogOut,
+  Smartphone,
 } from "lucide-react";
 
 import {
@@ -74,6 +80,8 @@ export default function SettingsPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const logoInputRef = useRef<HTMLInputElement>(null);
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
+  const [isSendingReset, setIsSendingReset] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -197,6 +205,51 @@ export default function SettingsPage() {
       setCloudSynced(false);
       setMessageIsError(false);
       setMessage("Profil enregistré localement. La synchronisation cloud sera réessayée à la prochaine connexion.");
+    }
+  }
+
+  async function sendPasswordReset() {
+    const email = auth.currentUser?.email;
+
+    if (!email) {
+      setMessageIsError(true);
+      setMessage("Aucune adresse e-mail n’est associée au compte connecté.");
+      return;
+    }
+
+    if (!navigator.onLine) {
+      setMessageIsError(true);
+      setMessage("Une connexion Internet est nécessaire pour envoyer l’e-mail de réinitialisation.");
+      return;
+    }
+
+    try {
+      setIsSendingReset(true);
+      await sendPasswordResetEmail(auth, email);
+      setMessageIsError(false);
+      setMessage(`Un e-mail de réinitialisation a été envoyé à ${email}. Vérifiez également vos courriers indésirables.`);
+    } catch (error) {
+      console.error("[Nexora Settings] Envoi de réinitialisation impossible :", error);
+      setMessageIsError(true);
+      setMessage("Impossible d’envoyer l’e-mail de réinitialisation. Vérifiez la connexion et réessayez.");
+    } finally {
+      setIsSendingReset(false);
+    }
+  }
+
+  async function handleSignOut() {
+    const confirmed = window.confirm("Voulez-vous vraiment vous déconnecter de Nexora Inventory ?");
+    if (!confirmed) return;
+
+    try {
+      setIsSigningOut(true);
+      await signOut(auth);
+      window.location.href = "/connexion";
+    } catch (error) {
+      console.error("[Nexora Settings] Déconnexion impossible :", error);
+      setMessageIsError(true);
+      setMessage("La déconnexion a échoué. Veuillez réessayer.");
+      setIsSigningOut(false);
     }
   }
 
@@ -832,6 +885,147 @@ export default function SettingsPage() {
                     sauvegarde récente avant de continuer.
                   </p>
                 </div>
+              </div>
+            </section>
+
+            {/* Sécurité du compte */}
+            <section className="overflow-hidden rounded-[24px] border border-slate-200/80 bg-white shadow-sm shadow-slate-900/[0.03]">
+              <div className="flex items-center gap-3 border-b border-slate-100 px-5 py-5 sm:px-6">
+                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-rose-50 text-rose-700">
+                  <LockKeyhole size={21} />
+                </div>
+                <div>
+                  <h2 className="font-bold text-slate-900">Sécurité du compte</h2>
+                  <p className="mt-1 text-xs text-slate-500">Contrôlez l’accès à votre compte Nexora.</p>
+                </div>
+              </div>
+
+              <div className="space-y-4 p-5 sm:p-6">
+                <div className="flex items-start justify-between gap-3 rounded-2xl bg-slate-50 p-4">
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Adresse e-mail du compte</p>
+                    <p className="mt-1 break-all text-sm font-semibold text-slate-800">
+                      {auth.currentUser?.email || "Aucune adresse disponible"}
+                    </p>
+                  </div>
+                  <Mail size={19} className="shrink-0 text-slate-400" />
+                </div>
+
+                <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-100 p-4">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-800">Vérification de l’adresse e-mail</p>
+                    <p className="mt-1 text-xs text-slate-500">État communiqué par Firebase Authentication.</p>
+                  </div>
+                  <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold ${
+                    auth.currentUser?.emailVerified
+                      ? "bg-emerald-50 text-emerald-700"
+                      : "bg-amber-50 text-amber-700"
+                  }`}>
+                    <BadgeCheck size={14} />
+                    {auth.currentUser?.emailVerified ? "Vérifiée" : "Non vérifiée"}
+                  </span>
+                </div>
+
+                <div className="rounded-2xl border border-blue-100 bg-blue-50/60 p-4">
+                  <div className="flex items-start gap-3">
+                    <KeyRound size={19} className="mt-0.5 shrink-0 text-blue-700" />
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">Mot de passe</p>
+                      <p className="mt-1 text-xs leading-5 text-slate-600">
+                        Recevez un lien sécurisé de Firebase pour choisir un nouveau mot de passe.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={sendPasswordReset}
+                    disabled={isSendingReset || !auth.currentUser?.email || !isOnline}
+                    className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-700 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isSendingReset ? <RefreshCw size={16} className="animate-spin" /> : <Mail size={16} />}
+                    {isSendingReset ? "Envoi en cours…" : "Envoyer un e-mail de réinitialisation"}
+                  </button>
+                </div>
+
+                <div className="border-t border-slate-100 pt-4">
+                  <p className="mb-3 text-xs leading-5 text-slate-500">
+                    Déconnectez-vous si vous utilisez un appareil partagé. Vos données synchronisées restent associées à votre compte.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleSignOut}
+                    disabled={isSigningOut}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-rose-200 bg-white px-4 py-3 text-sm font-semibold text-rose-700 transition hover:bg-rose-50 disabled:opacity-50"
+                  >
+                    {isSigningOut ? <RefreshCw size={16} className="animate-spin" /> : <LogOut size={16} />}
+                    {isSigningOut ? "Déconnexion…" : "Se déconnecter"}
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            {/* À propos et version */}
+            <section className="overflow-hidden rounded-[24px] border border-slate-200/80 bg-white shadow-sm shadow-slate-900/[0.03]">
+              <div className="flex items-center gap-3 border-b border-slate-100 px-5 py-5 sm:px-6">
+                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-700">
+                  <Info size={21} />
+                </div>
+                <div>
+                  <h2 className="font-bold text-slate-900">À propos de Nexora Inventory</h2>
+                  <p className="mt-1 text-xs text-slate-500">Informations sur votre application.</p>
+                </div>
+              </div>
+
+              <div className="space-y-4 p-5 sm:p-6">
+                <div className="flex items-center gap-4 rounded-2xl bg-gradient-to-br from-[#101D3A] via-[#173B72] to-[#1765B5] p-4 text-white">
+                  <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-white/20 bg-white/10">
+                    {settings.logoUrl ? (
+                      <img src={settings.logoUrl} alt="" className="h-full w-full object-contain" />
+                    ) : (
+                      <Database size={27} />
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-lg font-bold">{settings.companyName || "Nexora Inventory"}</p>
+                    <p className="mt-1 text-xs text-blue-100">Application de gestion des stocks</p>
+                    <span className="mt-2 inline-flex rounded-full border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] font-semibold">
+                      Version 0.1.0
+                    </span>
+                  </div>
+                </div>
+
+                <p className="text-sm leading-6 text-slate-600">
+                  Nexora Inventory vous aide à gérer vos produits, suivre les mouvements de stock et consulter vos rapports, avec une approche pensée pour fonctionner même lorsque la connexion Internet est indisponible.
+                </p>
+
+                <div className="divide-y divide-slate-100 rounded-2xl border border-slate-100">
+                  <div className="flex items-center justify-between gap-3 p-3.5">
+                    <span className="text-sm text-slate-500">Version de l’application</span>
+                    <span className="text-sm font-semibold text-slate-800">0.1.0</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 p-3.5">
+                    <span className="text-sm text-slate-500">Framework</span>
+                    <span className="text-sm font-semibold text-slate-800">Next.js 16.4.3</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 p-3.5">
+                    <span className="text-sm text-slate-500">Interface</span>
+                    <span className="text-sm font-semibold text-slate-800">React · TypeScript · Tailwind CSS</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 p-3.5">
+                    <span className="text-sm text-slate-500">Données et authentification</span>
+                    <span className="text-sm font-semibold text-slate-800">Dexie · Firebase</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 p-3.5">
+                    <span className="text-sm text-slate-500">Mode de fonctionnement</span>
+                    <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-700">
+                      <Smartphone size={15} /> PWA · Hors ligne
+                    </span>
+                  </div>
+                </div>
+
+                <p className="text-center text-xs leading-5 text-slate-400">
+                  © 2026 Nexora Inventory. Tous droits réservés.
+                </p>
               </div>
             </section>
 
