@@ -26,6 +26,9 @@ import {
   Info,
   UserRound,
   Wifi,
+  ImagePlus,
+  Trash2,
+  User,
 } from "lucide-react";
 
 import {
@@ -35,18 +38,24 @@ import {
 
 type CompanySettings = {
   companyName: string;
+  managerName: string;
   email: string;
   phone: string;
   address: string;
+  logoUrl: string;
+  logoPath: string;
 };
 
 const LEGACY_STORAGE_KEY = "nexora-inventory-settings";
 
 const defaultSettings: CompanySettings = {
   companyName: "",
+  managerName: "",
   email: "",
   phone: "",
   address: "",
+  logoUrl: "",
+  logoPath: "",
 };
 
 export default function SettingsPage() {
@@ -63,6 +72,8 @@ export default function SettingsPage() {
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
   const [cloudSynced, setCloudSynced] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const logoInputRef = useRef<HTMLInputElement>(null);
+  const [isUploadingLogo, setIsUploadingLogo] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -116,6 +127,9 @@ export default function SettingsPage() {
             email: remoteData.email ?? "",
             phone: remoteData.phone ?? "",
             address: remoteData.address ?? "",
+            managerName: remoteData.managerName ?? "",
+            logoUrl: remoteData.logoUrl ?? "",
+            logoPath: remoteData.logoPath ?? "",
           };
           localStorage.setItem(storageKey, JSON.stringify(remoteSettings));
           if (active) setSettings(remoteSettings);
@@ -184,6 +198,95 @@ export default function SettingsPage() {
       setMessageIsError(false);
       setMessage("Profil enregistré localement. La synchronisation cloud sera réessayée à la prochaine connexion.");
     }
+  }
+
+  async function handleLogoChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      setMessageIsError(true);
+      setMessage("Veuillez sélectionner un fichier image.");
+      event.target.value = "";
+      return;
+    }
+
+    if (file.size > 2 * 1024 * 1024) {
+      setMessageIsError(true);
+      setMessage("Le fichier original ne doit pas dépasser 2 Mo.");
+      event.target.value = "";
+      return;
+    }
+
+    try {
+      setIsUploadingLogo(true);
+      setMessage("");
+
+      // Le logo est compressé dans le navigateur puis stocké dans le document
+      // Firestore. Aucune configuration Firebase Storage n'est nécessaire.
+      const objectUrl = URL.createObjectURL(file);
+      try {
+        const image = new Image();
+        image.src = objectUrl;
+        await new Promise<void>((resolve, reject) => {
+          image.onload = () => resolve();
+          image.onerror = () => reject(new Error("Image illisible."));
+        });
+
+        const maxDataUrlLength = 300 * 1024;
+        let logoDataUrl = "";
+        const canvas = document.createElement("canvas");
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("Compression d'image indisponible sur cet appareil.");
+
+        for (const maxDimension of [600, 520, 440, 360, 300]) {
+          const ratio = Math.min(1, maxDimension / Math.max(image.naturalWidth, image.naturalHeight));
+          canvas.width = Math.max(1, Math.round(image.naturalWidth * ratio));
+          canvas.height = Math.max(1, Math.round(image.naturalHeight * ratio));
+          context.clearRect(0, 0, canvas.width, canvas.height);
+          context.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+          for (const quality of [0.82, 0.72, 0.62, 0.52, 0.42]) {
+            logoDataUrl = canvas.toDataURL("image/webp", quality);
+            if (!logoDataUrl.startsWith("data:image/webp")) {
+              logoDataUrl = canvas.toDataURL("image/jpeg", quality);
+            }
+            if (logoDataUrl.length <= maxDataUrlLength) break;
+          }
+          if (logoDataUrl.length <= maxDataUrlLength) break;
+        }
+
+        if (!logoDataUrl || logoDataUrl.length > maxDataUrlLength) {
+          throw new Error("Impossible de compresser suffisamment cette image. Choisissez un logo plus simple ou moins détaillé.");
+        }
+
+        setSettings((previous) => ({
+          ...previous,
+          logoUrl: logoDataUrl,
+          logoPath: "",
+        }));
+      } finally {
+        URL.revokeObjectURL(objectUrl);
+      }
+
+      setSaved(false);
+      setMessageIsError(false);
+      setMessage("Logo ajouté et optimisé. Cliquez sur « Enregistrer » pour le synchroniser avec vos autres appareils.");
+    } catch (error) {
+      console.error("[Nexora Settings] Préparation du logo impossible :", error);
+      setMessageIsError(true);
+      setMessage(error instanceof Error ? error.message : "Impossible de préparer le logo.");
+    } finally {
+      setIsUploadingLogo(false);
+      if (logoInputRef.current) logoInputRef.current.value = "";
+    }
+  }
+
+  function removeLogo() {
+    setSettings((previous) => ({ ...previous, logoUrl: "", logoPath: "" }));
+    setSaved(false);
+    setMessage("Logo retiré du profil. Cliquez sur « Enregistrer » pour confirmer.");
+    setMessageIsError(false);
   }
 
   async function exportBackup() {
@@ -385,6 +488,57 @@ export default function SettingsPage() {
 
               <div className="grid gap-5 p-5 sm:grid-cols-2 sm:p-6">
                 <div className="sm:col-span-2">
+                  <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Logo de l’entreprise
+                  </label>
+                  <div className="flex flex-col gap-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50/70 p-4 sm:flex-row sm:items-center">
+                    <div className="flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                      {settings.logoUrl ? (
+                        <img src={settings.logoUrl} alt="Logo de l’entreprise" className="h-full w-full object-contain" />
+                      ) : (
+                        <Building2 size={32} className="text-slate-300" />
+                      )}
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-sm font-semibold text-slate-800">
+                        {settings.logoUrl ? "Logo ajouté" : "Aucun logo ajouté"}
+                      </p>
+                      <p className="mt-1 text-xs leading-5 text-slate-500">
+                        Image PNG, JPG ou WebP. Fichier original jusqu’à 2 Mo ; le logo est automatiquement compressé pour Firestore et partagé entre les appareils du même compte.
+                      </p>
+                      <input
+                        ref={logoInputRef}
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp,image/gif"
+                        onChange={handleLogoChange}
+                        className="hidden"
+                      />
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => logoInputRef.current?.click()}
+                          disabled={isUploadingLogo}
+                          className="inline-flex items-center gap-2 rounded-xl bg-blue-700 px-4 py-2.5 text-xs font-semibold text-white hover:bg-blue-800 disabled:opacity-50"
+                        >
+                          {isUploadingLogo ? <RefreshCw size={15} className="animate-spin" /> : <ImagePlus size={15} />}
+                          {isUploadingLogo ? "Optimisation en cours…" : settings.logoUrl ? "Remplacer le logo" : "Ajouter un logo"}
+                        </button>
+                        {settings.logoUrl && (
+                          <button
+                            type="button"
+                            onClick={removeLogo}
+                            className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-white px-4 py-2.5 text-xs font-semibold text-rose-700 hover:bg-rose-50"
+                          >
+                            <Trash2 size={15} />
+                            Retirer
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="sm:col-span-2">
                   <label
                     htmlFor="companyName"
                     className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500"
@@ -404,6 +558,29 @@ export default function SettingsPage() {
                         updateField("companyName", e.target.value)
                       }
                       placeholder="Ex : Nexora Solutions"
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50/70 py-3.5 pl-11 pr-4 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10"
+                    />
+                  </div>
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label
+                    htmlFor="managerName"
+                    className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500"
+                  >
+                    Responsable de l’entreprise
+                  </label>
+                  <div className="relative">
+                    <User
+                      size={17}
+                      className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
+                    />
+                    <input
+                      id="managerName"
+                      type="text"
+                      value={settings.managerName}
+                      onChange={(e) => updateField("managerName", e.target.value)}
+                      placeholder="Nom et prénom du responsable"
                       className="w-full rounded-xl border border-slate-200 bg-slate-50/70 py-3.5 pl-11 pr-4 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10"
                     />
                   </div>
