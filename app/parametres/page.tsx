@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
+import { auth, firestore } from "@/lib/firebase";
+import { doc, getDoc, setDoc } from "firebase/firestore";
 import {
   Building2,
   Save,
@@ -22,6 +24,8 @@ import {
   WifiOff,
   CircleCheck,
   Info,
+  UserRound,
+  Wifi,
 } from "lucide-react";
 
 import {
@@ -55,34 +59,94 @@ export default function SettingsPage() {
   const [message, setMessage] = useState("");
   const [isRestoring, setIsRestoring] = useState(false);
   const [messageIsError, setMessageIsError] = useState(false);
+  const [isOnline, setIsOnline] = useState(true);
+  const [isLoadingProfile, setIsLoadingProfile] = useState(true);
+  const [cloudSynced, setCloudSynced] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    try {
-      let stored = localStorage.getItem(storageKey);
+    let active = true;
 
-      // Migration unique des anciens paramètres partagés vers le premier compte connecté.
-      if (!stored) {
-        const legacyStored = localStorage.getItem(LEGACY_STORAGE_KEY);
+    const updateConnection = () => setIsOnline(navigator.onLine);
+    updateConnection();
+    window.addEventListener("offline", updateConnection);
 
-        if (legacyStored) {
-          stored = legacyStored;
-          localStorage.setItem(storageKey, legacyStored);
-          localStorage.removeItem(LEGACY_STORAGE_KEY);
+    async function loadProfile() {
+      setIsLoadingProfile(true);
+      try {
+        let stored = localStorage.getItem(storageKey);
+        let hasPendingChanges = localStorage.getItem(`${storageKey}-pending`) === "true";
+
+        // Migration des anciens paramètres locaux vers le compte actuellement connecté.
+        if (!stored) {
+          const legacyStored = localStorage.getItem(LEGACY_STORAGE_KEY);
+          if (legacyStored) {
+            stored = legacyStored;
+            localStorage.setItem(storageKey, legacyStored);
+            localStorage.setItem(`${storageKey}-pending`, "true");
+            localStorage.removeItem(LEGACY_STORAGE_KEY);
+            hasPendingChanges = true;
+          }
         }
-      }
 
-      if (stored) {
-        setSettings({
-          ...defaultSettings,
-          ...JSON.parse(stored),
-        });
+        if (stored && active) {
+          setSettings({ ...defaultSettings, ...JSON.parse(stored) });
+        }
+
+        if (!navigator.onLine || !uid) return;
+
+        const profileRef = doc(firestore, "users", uid, "settings", "company");
+
+        if (hasPendingChanges && stored) {
+          const localSettings = { ...defaultSettings, ...JSON.parse(stored) };
+          await setDoc(profileRef, {
+            ...localSettings,
+            updatedAt: new Date().toISOString(),
+          });
+          localStorage.removeItem(`${storageKey}-pending`);
+          if (active) setCloudSynced(true);
+          return;
+        }
+
+        const snapshot = await getDoc(profileRef);
+        if (snapshot.exists()) {
+          const remoteData = snapshot.data();
+          const remoteSettings: CompanySettings = {
+            companyName: remoteData.companyName ?? "",
+            email: remoteData.email ?? "",
+            phone: remoteData.phone ?? "",
+            address: remoteData.address ?? "",
+          };
+          localStorage.setItem(storageKey, JSON.stringify(remoteSettings));
+          if (active) setSettings(remoteSettings);
+        }
+        if (active) setCloudSynced(true);
+      } catch (error) {
+        console.error("[Nexora Settings] Chargement du profil impossible :", error);
+        if (active) {
+          setCloudSynced(false);
+          setMessageIsError(true);
+          setMessage("Profil chargé depuis cet appareil. La synchronisation cloud sera réessayée.");
+        }
+      } finally {
+        if (active) setIsLoadingProfile(false);
       }
-    } catch {
-      setMessageIsError(true);
-      setMessage("Impossible de charger les paramètres.");
     }
-  }, [storageKey]);
+
+    void loadProfile();
+    const handleOnline = () => {
+      updateConnection();
+      void loadProfile();
+    };
+    window.addEventListener("online", handleOnline);
+
+    return () => {
+      active = false;
+      window.removeEventListener("online", updateConnection);
+      window.removeEventListener("offline", updateConnection);
+      window.removeEventListener("online", handleOnline);
+    };
+  }, [storageKey, uid]);
 
   function updateField(field: keyof CompanySettings, value: string) {
     setSettings((previous) => ({
@@ -93,16 +157,32 @@ export default function SettingsPage() {
     setMessage("");
   }
 
-  function saveSettings() {
+  async function saveSettings() {
     try {
-      localStorage.setItem(storageKey, JSON.stringify(settings));
+      const payload = { ...settings };
+      localStorage.setItem(storageKey, JSON.stringify(payload));
+      localStorage.setItem(`${storageKey}-pending`, "true");
       setSaved(true);
       setMessageIsError(false);
-      setMessage("Les informations de votre entreprise ont été enregistrées.");
-    } catch {
-      setSaved(false);
-      setMessageIsError(true);
-      setMessage("Erreur lors de l'enregistrement des paramètres.");
+
+      if (navigator.onLine && uid) {
+        await setDoc(
+          doc(firestore, "users", uid, "settings", "company"),
+          { ...payload, updatedAt: new Date().toISOString() }
+        );
+        localStorage.removeItem(`${storageKey}-pending`);
+        setCloudSynced(true);
+        setMessage("Profil enregistré sur cet appareil et synchronisé avec votre compte.");
+      } else {
+        setCloudSynced(false);
+        setMessage("Profil enregistré localement. Il sera synchronisé au retour de la connexion.");
+      }
+    } catch (error) {
+      console.error("[Nexora Settings] Enregistrement cloud impossible :", error);
+      setSaved(true);
+      setCloudSynced(false);
+      setMessageIsError(false);
+      setMessage("Profil enregistré localement. La synchronisation cloud sera réessayée à la prochaine connexion.");
     }
   }
 
@@ -209,7 +289,9 @@ export default function SettingsPage() {
         };
 
         localStorage.setItem(storageKey, JSON.stringify(restoredSettings));
+        localStorage.setItem(`${storageKey}-pending`, "true");
         setSettings(restoredSettings);
+        setCloudSynced(false);
       }
 
       setMessageIsError(false);
@@ -258,10 +340,8 @@ export default function SettingsPage() {
                 <ShieldCheck size={21} />
               </div>
               <div>
-                <p className="text-sm font-semibold">Données locales</p>
-                <p className="mt-0.5 text-xs text-blue-100/70">
-                  Stockage sur cet appareil
-                </p>
+                <p className="text-sm font-semibold">{isOnline ? "Connexion disponible" : "Mode hors ligne"}</p>
+                <p className="mt-0.5 text-xs text-blue-100/70">{cloudSynced ? "Profil synchronisé" : "Synchronisation en attente"}</p>
               </div>
             </div>
           </div>
@@ -411,6 +491,21 @@ export default function SettingsPage() {
                   {saved ? "Modifications enregistrées" : "Enregistrer"}
                 </button>
               </div>
+            </section>
+
+            {/* Compte et synchronisation */}
+            <section className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-sm sm:p-6">
+              <div className="flex items-center gap-3">
+                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-cyan-50 text-cyan-700"><UserRound size={21} /></div>
+                <div><h2 className="font-bold text-slate-900">Compte et synchronisation</h2><p className="mt-1 text-xs text-slate-500">Votre profil est associé à votre compte Firebase.</p></div>
+              </div>
+              <div className="mt-5 space-y-3 text-sm">
+                <div className="flex items-center justify-between gap-3"><span className="text-slate-500">Compte connecté</span><span className="max-w-[60%] truncate font-semibold text-slate-800">{auth.currentUser?.email || "Compte authentifié"}</span></div>
+                <div className="flex items-center justify-between gap-3"><span className="text-slate-500">Identifiant utilisateur</span><span className="max-w-[60%] truncate font-mono text-xs text-slate-600">{uid}</span></div>
+                <div className="flex items-center justify-between gap-3"><span className="text-slate-500">État du réseau</span><span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold ${isOnline ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{isOnline ? <Wifi size={14} /> : <WifiOff size={14} />}{isOnline ? "En ligne" : "Hors ligne"}</span></div>
+                <div className="flex items-center justify-between gap-3"><span className="text-slate-500">Profil cloud</span><span className={`inline-flex items-center gap-1.5 text-xs font-bold ${cloudSynced ? "text-emerald-700" : "text-amber-700"}`}>{cloudSynced ? <CheckCircle2 size={15} /> : <RefreshCw size={15} />}{isLoadingProfile ? "Chargement…" : cloudSynced ? "Synchronisé" : "En attente"}</span></div>
+              </div>
+              <p className="mt-4 rounded-xl bg-blue-50 p-3 text-xs leading-5 text-blue-800">Les informations de l’entreprise sont sauvegardées localement et dans Firestore. Connectez-vous avec le même compte sur un autre appareil pour retrouver ce profil.</p>
             </section>
 
             {/* Préférences */}
@@ -585,7 +680,7 @@ export default function SettingsPage() {
                 </div>
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-slate-500">Paramètres</span>
-                  <span className="font-semibold text-slate-700">Stockage local</span>
+                  <span className="font-semibold text-slate-700">Local + Firestore</span>
                 </div>
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-slate-500">Format de sauvegarde</span>
@@ -598,9 +693,7 @@ export default function SettingsPage() {
               <div className="mt-5 flex items-start gap-2 rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-500">
                 <Info size={15} className="mt-0.5 shrink-0 text-blue-600" />
                 <p>
-                  Les données locales ne sont pas automatiquement synchronisées
-                  entre plusieurs appareils. Conservez régulièrement une copie
-                  de sauvegarde.
+                  Le profil entreprise est synchronisé avec votre compte. Les produits et mouvements conservent leur propre mécanisme de synchronisation. Gardez également des sauvegardes JSON régulières.
                 </p>
               </div>
             </section>
